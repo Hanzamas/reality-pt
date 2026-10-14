@@ -1,0 +1,15 @@
+# build output
+/dist/
+*.exe
+*.test
+*.out
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# local tooling
+.codegraph/
+.claude/
