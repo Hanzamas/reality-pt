@@ -10,8 +10,8 @@ import (
 const (
 	trainSessions = 20
 	testSessions  = 20
-	benignTrain   = 40
-	benignTest    = 20
+	benignTrain   = 60
+	benignTest    = 40
 	firstSteps    = 10
 	modalWindow   = 30
 	benignFPR     = 0.05
@@ -116,22 +116,23 @@ func TestShapingMovesWhatADetectorSees(t *testing.T) {
 	t.Logf("naive template detector               %.2f     %.2f     %.2f", naive.plain, naive.padded, naive.benign)
 	t.Logf("adaptive template detector            %.2f     %.2f     %.2f", adaptive.plain, adaptive.padded, adaptive.benign)
 
-	// The detectors must catch the unshaped tunnel, or the comparison says
-	// nothing.
-	if equal.plain < 0.5 {
+	// The detectors must catch the unshaped tunnel and leave browsing mostly
+	// alone, or the comparison says nothing.
+	if equal.plain < 0.9 {
 		t.Errorf("the equal-size detector flags only %.2f of unshaped sessions", equal.plain)
 	}
 	if naive.plain < 0.5 {
 		t.Errorf("the naive template detector flags only %.2f of unshaped sessions", naive.plain)
 	}
-	// What shaping is meant to do against a censor that does not know about
-	// it.
-	if equal.padded >= equal.plain {
-		t.Errorf("padding did not lower the equal-size detector: %.2f vs %.2f", equal.padded, equal.plain)
+	if equal.benign > 0.3 || naive.benign > 0.3 {
+		t.Errorf("too many browsing sessions flagged: equal-size %.2f, naive template %.2f", equal.benign, naive.benign)
 	}
-	if naive.padded >= naive.plain {
-		t.Errorf("padding did not lower the naive template detector: %.2f vs %.2f", naive.padded, naive.plain)
+	// What padding is built to do: hide the run of equal-size records.
+	if equal.padded > 0.2 {
+		t.Errorf("padding left %.2f of sessions visible to the equal-size detector", equal.padded)
 	}
-	// The adaptive detector is reported but not asserted: it is the case that
-	// shows the limit of the shaper.
+	// The template detectors are reported and not asserted. Padding changes
+	// sizes but not who speaks when, and the censor that matches on the
+	// opening exchange keeps seeing it. That is the known limit, written up in
+	// docs/threat-model.md.
 }

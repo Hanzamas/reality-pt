@@ -5,6 +5,7 @@
 package lab
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -193,9 +194,7 @@ func (b *Browsing) Visit(t testing.TB, rng *mrand.Rand) []traffic.Step {
 			},
 		},
 	}
-	for requests := 3 + rng.IntN(6); requests > 0; requests-- {
-		// Sizes from 400 bytes to 300 KB, spread evenly on a log scale.
-		size := int(400 * math.Exp(rng.Float64()*math.Log(300_000.0/400)))
+	get := func(size int) {
 		url := "https://" + SNI + "/page?n=" + itoa(size)
 		resp, err := client.Get(url)
 		if err != nil {
@@ -203,6 +202,39 @@ func (b *Browsing) Visit(t testing.TB, rng *mrand.Rand) []traffic.Step {
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
+	}
+	post := func(size int) {
+		resp, err := client.Post("https://"+SNI+"/upload?n=200", "application/octet-stream", bytes.NewReader(make([]byte, size)))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+
+	// One of four kinds of visit, so the comparison traffic is not only page
+	// loads: chatty exchanges of small messages look much like Tor cells.
+	switch rng.IntN(4) {
+	case 0: // browsing: sizes from 400 bytes to 300 KB, even on a log scale
+		for requests := 3 + rng.IntN(6); requests > 0; requests-- {
+			get(int(400 * math.Exp(rng.Float64()*math.Log(300_000.0/400))))
+		}
+	case 1: // polling: many small requests and replies
+		for requests := 15 + rng.IntN(30); requests > 0; requests-- {
+			if rng.IntN(3) == 0 {
+				post(100 + rng.IntN(500))
+			} else {
+				get(200 + rng.IntN(600))
+			}
+			time.Sleep(time.Duration(rng.IntN(3)) * time.Millisecond)
+		}
+	case 2: // download
+		for requests := 1 + rng.IntN(2); requests > 0; requests-- {
+			get(200_000 + rng.IntN(800_000))
+		}
+	default: // upload
+		post(50_000 + rng.IntN(350_000))
+		get(300)
 	}
 	client.CloseIdleConnections()
 	return traffic.AfterHandshake(tap.Wait(timeout))
