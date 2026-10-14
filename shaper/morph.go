@@ -432,7 +432,7 @@ func (c *morphConn) decoyLoop() {
 // background reader must never time out on the underlying connection.
 func (c *morphConn) SetDeadline(t time.Time) error {
 	_ = c.SetReadDeadline(t)
-	return c.Conn.SetWriteDeadline(t)
+	return c.SetWriteDeadline(t)
 }
 
 // SetReadDeadline implements net.Conn.
