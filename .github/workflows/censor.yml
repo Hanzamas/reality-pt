@@ -47,8 +47,12 @@ jobs:
           key: censorlab-${{ env.CENSORLAB_REF }}
       - name: Get CensorLab
         run: |
-          [ -d censorlab/.git ] || git clone https://github.com/SPIN-UMass/censorlab.git censorlab
-          git -C censorlab checkout "$CENSORLAB_REF"
+          # The cache may have created censorlab/target already, so fetch into the
+          # directory instead of cloning.
+          mkdir -p censorlab
+          git -C censorlab init -q
+          git -C censorlab fetch -q --depth 1 https://github.com/SPIN-UMass/censorlab.git "$CENSORLAB_REF"
+          git -C censorlab checkout -q FETCH_HEAD
       - name: Build CensorLab
         working-directory: censorlab
         run: cargo build --release
