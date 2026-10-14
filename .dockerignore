@@ -3,6 +3,6 @@
 .codegraph
 .claude
 dist
-e2e
-scripts
+test
+docs
 *.md

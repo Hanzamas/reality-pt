@@ -24,7 +24,7 @@ import (
 
 	xr "github.com/xtls/reality"
 
-	"github.com/hanzamas/reality-pt/internal/traffic"
+	"github.com/hanzamas/reality-pt/internal/measure/traffic"
 	"github.com/hanzamas/reality-pt/transport/reality"
 )
 

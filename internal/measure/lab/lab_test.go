@@ -4,7 +4,7 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/hanzamas/reality-pt/internal/traffic"
+	"github.com/hanzamas/reality-pt/internal/measure/traffic"
 )
 
 const (

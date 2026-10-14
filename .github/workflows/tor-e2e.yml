@@ -9,7 +9,7 @@ on:
       - "transport/**"
       - "internal/**"
       - "cmd/**"
-      - "scripts/**"
+      - "test/scripts/**"
       - "docker/**"
       - "Dockerfile"
       - ".github/workflows/tor-e2e.yml"
@@ -44,7 +44,7 @@ jobs:
         env:
           BIN: ${{ runner.temp }}/bin
           WORK: ${{ runner.temp }}/tor-e2e
-        run: bash scripts/tor-e2e.sh
+        run: bash test/scripts/tor-e2e.sh
       - name: Keep logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -109,7 +109,7 @@ jobs:
           BIN: ${{ runner.temp }}/bin
           WORK: ${{ runner.temp }}/docker-e2e
         run: |
-          BRIDGE_LINE="$(cat "$RUNNER_TEMP/line2")" bash scripts/tor-client-check.sh
+          BRIDGE_LINE="$(cat "$RUNNER_TEMP/line2")" bash test/scripts/tor-client-check.sh
       - name: Container logs
         if: always()
         run: docker logs bridge 2>&1 | tail -80

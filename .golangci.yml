@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+    - usestdlibvars
+    - bodyclose
+    - nilerr
+
+formatters:
+  enable:
+    - gofmt

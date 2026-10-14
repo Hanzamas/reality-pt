@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Starts a real Tor bridge that uses reality-server, then checks it with a real
-# Tor client (scripts/tor-client-check.sh).
+# Tor client (test/scripts/tor-client-check.sh).
 #
-#   BIN=/path/to/binaries scripts/tor-e2e.sh
+#   BIN=/path/to/binaries test/scripts/tor-e2e.sh
 #
 # BIN must hold reality-client, reality-server and reality-keygen. The cover
 # site (COVER_HOST, default www.cloudflare.com) must be reachable and speak
