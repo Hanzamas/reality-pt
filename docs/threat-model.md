@@ -60,7 +60,7 @@ How to read it:
 
 ## Next steps for the shaper
 
-- Follow the openings of the cover site itself, so the opening and the SNI agree. The operator would collect them from the cover with the same tool that made `real-openings.json`.
+- Follow the openings of the cover site itself, so the opening and the SNI agree. Tracked in [#7](https://github.com/Hanzamas/reality-pt/issues/7). The operator would collect them from the cover with the same tool that made `real-openings.json`.
 - Carry the chosen opening in the client's first frame, so the two ends need no shared list and a version mismatch cannot break a connection. Today they must be built with the same list, and the server refuses a client whose list differs.
 - Measure with more real traffic: more sites, video and file transfers, and traffic from a censored network.
 
