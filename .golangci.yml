@@ -8,6 +8,10 @@ linters:
     - usestdlibvars
     - bodyclose
     - nilerr
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
 
 formatters:
   enable:
