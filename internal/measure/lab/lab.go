@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hanzamas/reality-pt/internal/pt/relay"
 	"github.com/hanzamas/reality-pt/internal/measure/traffic"
+	"github.com/hanzamas/reality-pt/internal/pt/relay"
 	"github.com/hanzamas/reality-pt/transport/reality"
 )
 
