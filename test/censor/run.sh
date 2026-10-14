@@ -16,6 +16,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
+mkdir -p "$WORK"
 CLIENT_IP=127.0.0.1
 echo "work directory: $WORK"
 
