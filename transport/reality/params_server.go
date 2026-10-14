@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -24,6 +25,7 @@ const (
 	optFallbackAfter    = "fallback-after"
 	optFallbackRate     = "fallback-rate"
 	optFallbackBurst    = "fallback-burst"
+	optShaper           = "shaper"
 )
 
 // DefaultMaxTimeDiff is how far a client clock may differ from the bridge
@@ -76,6 +78,9 @@ type ServerParams struct {
 	ProxyProtocol byte
 	// FallbackLimit applies to forwarding to the cover site.
 	FallbackLimit FallbackLimit
+	// Shaper names the traffic shaper for every tunnel. Clients learn it from
+	// the bridge line. Empty means none.
+	Shaper string
 }
 
 // ParseServerParams reads ServerParams from the server transport options.
@@ -148,17 +153,27 @@ func ParseServerParams(args transport.Args) (ServerParams, error) {
 	if err := parseFallbackLimit(args, &p.FallbackLimit); err != nil {
 		return p, err
 	}
+	if v, ok := args.Get(optShaper); ok {
+		p.Shaper = strings.ToLower(v)
+	}
+	if _, err := shaper.ByName(p.Shaper); err != nil {
+		return p, fmt.Errorf("reality: %s: %w", optShaper, err)
+	}
 	return p, nil
 }
 
 // PublicArgs returns the values a client needs for its bridge line. It lists
 // the first server name and short ID only, and never the private key.
 func (p ServerParams) PublicArgs() map[string][]string {
-	return map[string][]string{
+	args := map[string][]string{
 		argPublicKey:  {EncodeKey(p.PrivateKey.PublicKey().Bytes())},
 		argShortID:    {p.ShortIDs[0].String()},
 		argServerName: {p.ServerNames[0]},
 	}
+	if p.Shaper != "" && p.Shaper != shaper.None {
+		args[argShaper] = []string{p.Shaper}
+	}
+	return args
 }
 
 // optionalVersion reads a version argument. It returns nil if absent.

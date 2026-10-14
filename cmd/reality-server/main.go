@@ -8,7 +8,6 @@ import (
 	"github.com/hanzamas/reality-pt/internal/ptrun"
 	"github.com/hanzamas/reality-pt/internal/ptserver"
 	"github.com/hanzamas/reality-pt/internal/version"
-	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport/reality"
 )
 
@@ -25,7 +24,6 @@ func run() int {
 		Name:    reality.Name,
 		Version: version.Version,
 		Factory: reality.NewServerStage,
-		Shaper:  shaper.Noop{},
 		Log:     log,
 	})
 	if err != nil {

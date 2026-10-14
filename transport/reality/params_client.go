@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -14,6 +15,7 @@ const (
 	argShortID     = "short-id"
 	argServerName  = "sni"
 	argFingerprint = "fingerprint"
+	argShaper      = "shaper"
 )
 
 // ClientParams is everything a client needs to reach one bridge.
@@ -27,6 +29,9 @@ type ClientParams struct {
 	// Fingerprint names the uTLS ClientHello profile. Empty means
 	// DefaultFingerprint.
 	Fingerprint string
+	// Shaper names the traffic shaper. It must match the bridge's. Empty
+	// means none.
+	Shaper string
 }
 
 // ParseClientParams reads ClientParams from the arguments of a bridge line.
@@ -65,6 +70,13 @@ func ParseClientParams(args transport.Args) (ClientParams, error) {
 	}
 	if _, err := lookupFingerprint(p.Fingerprint); err != nil {
 		return p, fmt.Errorf("reality: %s: %w", argFingerprint, err)
+	}
+
+	if v, ok := args.Get(argShaper); ok {
+		p.Shaper = strings.ToLower(v)
+	}
+	if _, err := shaper.ByName(p.Shaper); err != nil {
+		return p, fmt.Errorf("reality: %s: %w", argShaper, err)
 	}
 	return p, nil
 }

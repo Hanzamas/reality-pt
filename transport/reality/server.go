@@ -1,11 +1,13 @@
 package reality
 
 import (
+	"fmt"
 	"net"
 	"time"
 
 	xr "github.com/xtls/reality"
 
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -16,13 +18,18 @@ const coverDialTimeout = 10 * time.Second
 type Server struct {
 	params ServerParams
 	replay *seenCache
+	shaper shaper.Shaper
 }
 
 var _ transport.ServerStage = (*Server)(nil)
 
 // NewServer returns a Server for the given parameters.
-func NewServer(p ServerParams) *Server {
-	return &Server{params: p, replay: newReplayCache(p.MaxTimeDiff)}
+func NewServer(p ServerParams) (*Server, error) {
+	s, err := shaper.ByName(p.Shaper)
+	if err != nil {
+		return nil, fmt.Errorf("reality: %w", err)
+	}
+	return &Server{params: p, replay: newReplayCache(p.MaxTimeDiff), shaper: s}, nil
 }
 
 // NewServerStage is the transport.ServerFactory for REALITY.
@@ -31,7 +38,11 @@ func NewServerStage(args transport.Args) (transport.ServerStage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewServer(p), nil
+	s, err := NewServer(p)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // Listen implements transport.ServerStage. inner must accept TCP connections.
@@ -45,6 +56,9 @@ func (s *Server) Listen(inner net.Listener) net.Listener {
 
 // PublicArgs implements transport.ServerStage.
 func (s *Server) PublicArgs() map[string][]string { return s.params.PublicArgs() }
+
+// Shaper implements transport.ServerStage.
+func (s *Server) Shaper() shaper.Shaper { return s.shaper }
 
 func (s *Server) config() *xr.Config {
 	p := s.params

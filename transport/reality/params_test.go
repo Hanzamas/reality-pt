@@ -254,6 +254,51 @@ func TestServerRejectsBadOptionalSettings(t *testing.T) {
 	}
 }
 
+func TestShaperArguments(t *testing.T) {
+	args, _ := newServerArgs(t)
+
+	// Absent: no shaper is published.
+	p, err := reality.ParseServerParams(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.PublicArgs()["shaper"]; ok {
+		t.Error("PublicArgs lists a shaper when none is set")
+	}
+
+	// Set: the bridge line carries it, and the client accepts it.
+	args["shaper"] = "Padding"
+	p, err = reality.ParseServerParams(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := p.PublicArgs()
+	if got := public["shaper"]; len(got) != 1 || got[0] != "padding" {
+		t.Fatalf("PublicArgs shaper = %v, want [padding]", got)
+	}
+	client := mapArgs{}
+	for k, values := range public {
+		client[k] = values[0]
+	}
+	cp, err := reality.ParseClientParams(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.Shaper != "padding" {
+		t.Errorf("client shaper = %q", cp.Shaper)
+	}
+
+	// Unknown names are refused on both sides.
+	args["shaper"] = "rot13"
+	if _, err := reality.ParseServerParams(args); err == nil {
+		t.Error("the server accepted an unknown shaper")
+	}
+	client["shaper"] = "rot13"
+	if _, err := reality.ParseClientParams(client); err == nil {
+		t.Error("the client accepted an unknown shaper")
+	}
+}
+
 func TestVersion(t *testing.T) {
 	v, err := reality.ParseVersion(" 1.20.255 ")
 	if err != nil {

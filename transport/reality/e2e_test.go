@@ -48,12 +48,15 @@ func startBridge(t *testing.T) *bridge {
 	b := &bridge{cover: cover, shortID: reality.ShortID{0xab, 0xcd, 1, 2, 3, 4, 5, 6}}
 	copy(b.public[:], priv.PublicKey().Bytes())
 
-	server := reality.NewServer(reality.ServerParams{
+	server, err := reality.NewServer(reality.ServerParams{
 		PrivateKey:  priv,
 		Dest:        cover.Listener.Addr().String(),
 		ServerNames: []string{coverSNI},
 		ShortIDs:    []reality.ShortID{b.shortID},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

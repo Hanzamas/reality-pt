@@ -15,7 +15,6 @@ import (
 
 	"github.com/hanzamas/reality-pt/internal/ptrun"
 	"github.com/hanzamas/reality-pt/internal/relay"
-	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -30,9 +29,7 @@ type Config struct {
 	Version string
 	// Factory builds the handshake stage for each bridge line.
 	Factory transport.ClientFactory
-	// Shaper wraps every tunnel connection.
-	Shaper shaper.Shaper
-	Log    *slog.Logger
+	Log     *slog.Logger
 }
 
 // Run serves SOCKS requests until ctx ends.
@@ -160,5 +157,5 @@ func (c *client) connect(ctx context.Context, req pt.SocksRequest) (net.Conn, er
 		_ = raw.Close()
 		return nil, err
 	}
-	return c.cfg.Shaper.Wrap(tunnel), nil
+	return stage.Shaper().Wrap(tunnel), nil
 }

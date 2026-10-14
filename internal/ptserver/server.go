@@ -14,7 +14,6 @@ import (
 
 	"github.com/hanzamas/reality-pt/internal/ptrun"
 	"github.com/hanzamas/reality-pt/internal/relay"
-	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -26,9 +25,7 @@ type Config struct {
 	Version string
 	// Factory builds the server stage from the transport options in torrc.
 	Factory transport.ServerFactory
-	// Shaper wraps every tunnel connection.
-	Shaper shaper.Shaper
-	Log    *slog.Logger
+	Log     *slog.Logger
 }
 
 // Run serves tunnel connections until ctx ends.
@@ -49,7 +46,7 @@ func Run(ctx context.Context, cfg Config) error {
 			_ = pt.SmethodError(b.MethodName, "no such method")
 			continue
 		}
-		ln, err := s.listen(b)
+		ln, stage, err := s.listen(b)
 		if err != nil {
 			_ = pt.SmethodError(b.MethodName, err.Error())
 			continue
@@ -59,7 +56,7 @@ func Run(ctx context.Context, cfg Config) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.acceptLoop(ctx, ln)
+			s.acceptLoop(ctx, ln, stage)
 		}()
 	}
 	pt.SmethodsDone()
@@ -82,19 +79,19 @@ type server struct {
 
 // listen builds the server stage for one bind address and announces it to Tor
 // together with the public arguments that go into the bridge line.
-func (s *server) listen(b pt.Bindaddr) (net.Listener, error) {
+func (s *server) listen(b pt.Bindaddr) (net.Listener, transport.ServerStage, error) {
 	stage, err := s.cfg.Factory(b.Options)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tcp, err := net.ListenTCP("tcp", b.Addr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	args := stage.PublicArgs()
 	pt.SmethodArgs(b.MethodName, tcp.Addr(), pt.Args(args))
 	s.saveBridgeLine(b.MethodName, tcp.Addr(), args)
-	return stage.Listen(tcp), nil
+	return stage.Listen(tcp), stage, nil
 }
 
 // saveBridgeLine writes the bridge line for the operator. It is a courtesy, so
@@ -110,7 +107,7 @@ func (s *server) saveBridgeLine(name string, listen net.Addr, args map[string][]
 	}
 }
 
-func (s *server) acceptLoop(ctx context.Context, ln net.Listener) {
+func (s *server) acceptLoop(ctx context.Context, ln net.Listener, stage transport.ServerStage) {
 	var (
 		wg      sync.WaitGroup
 		backoff ptrun.Backoff
@@ -132,14 +129,14 @@ func (s *server) acceptLoop(ctx context.Context, ln net.Listener) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.serve(ctx, conn)
+			s.serve(ctx, conn, stage)
 		}()
 	}
 }
 
 // serve runs the pipeline for one tunnel connection. It does not log client
 // addresses: a bridge should not keep them.
-func (s *server) serve(ctx context.Context, conn net.Conn) {
+func (s *server) serve(ctx context.Context, conn net.Conn, stage transport.ServerStage) {
 	defer conn.Close()
 
 	or, err := pt.DialOr(&s.info, conn.RemoteAddr().String(), s.cfg.Name)
@@ -155,5 +152,5 @@ func (s *server) serve(ctx context.Context, conn net.Conn) {
 	})
 	defer stop()
 
-	relay.Pipe(s.cfg.Shaper.Wrap(conn), or)
+	relay.Pipe(stage.Shaper().Wrap(conn), or)
 }

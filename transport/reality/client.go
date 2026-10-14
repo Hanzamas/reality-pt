@@ -26,6 +26,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -56,6 +57,7 @@ var errHelloLayout = errors.New("reality: unexpected ClientHello layout")
 type Client struct {
 	params ClientParams
 	hello  utls.ClientHelloID
+	shaper shaper.Shaper
 }
 
 var _ transport.ClientStage = (*Client)(nil)
@@ -69,8 +71,15 @@ func NewClient(p ClientParams) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reality: %w", err)
 	}
-	return &Client{params: p, hello: hello}, nil
+	s, err := shaper.ByName(p.Shaper)
+	if err != nil {
+		return nil, fmt.Errorf("reality: %w", err)
+	}
+	return &Client{params: p, hello: hello, shaper: s}, nil
 }
+
+// Shaper implements transport.ClientStage.
+func (c *Client) Shaper() shaper.Shaper { return c.shaper }
 
 // NewClientStage is the transport.ClientFactory for REALITY.
 func NewClientStage(args transport.Args) (transport.ClientStage, error) {

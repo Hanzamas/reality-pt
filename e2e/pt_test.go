@@ -67,8 +67,43 @@ func run(m *testing.M) int {
 }
 
 func TestTunnelThroughPTBinaries(t *testing.T) {
-	c := startChain(t)
+	assertEcho(t, startChain(t))
+}
 
+// The bridge line carries the shaper, so the client picks it up without being
+// told, and both ends frame the traffic the same way.
+func TestTunnelWithTheShaperTheBridgePublishes(t *testing.T) {
+	c := startChain(t, "reality:shaper=padding")
+	if c.args["shaper"] != "padding" {
+		t.Fatalf("the bridge did not publish its shaper: %v", c.args)
+	}
+	assertEcho(t, c)
+}
+
+// A client that leaves the shaper out of a bridge that uses one cannot read the
+// bridge's frames, and the connection must not look like it works.
+func TestClientWithoutTheShaperDoesNotPassData(t *testing.T) {
+	c := startChain(t, "reality:shaper=padding")
+
+	username := c.username(nil)
+	username = strings.ReplaceAll(username, ";shaper=padding", "")
+	username = strings.ReplaceAll(username, "shaper=padding;", "")
+	conn, code := socksConnect(t, c.socksAddr, username, c.bridgeAddr)
+	if code != 0 {
+		t.Fatalf("SOCKS reply code = %d, want 0", code)
+	}
+	msg := []byte("tor cell goes here")
+	_, _ = conn.Write(msg)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got := make([]byte, len(msg))
+	if _, err := io.ReadFull(conn, got); err == nil && string(got) == string(msg) {
+		t.Fatal("data passed intact although the two ends used different shapers")
+	}
+}
+
+// assertEcho sends one message through the client and expects it back.
+func assertEcho(t *testing.T, c chain) {
+	t.Helper()
 	conn, code := socksConnect(t, c.socksAddr, c.username(nil), c.bridgeAddr)
 	if code != 0 {
 		t.Fatalf("SOCKS reply code = %d, want 0", code)
@@ -162,7 +197,9 @@ func (c chain) username(override map[string]string) string {
 	return strings.Join(pairs, ";")
 }
 
-func startChain(t *testing.T) chain {
+// startChain starts a bridge and a client. Each extra option is a server
+// transport option such as "reality:shaper=padding".
+func startChain(t *testing.T, extraOptions ...string) chain {
 	t.Helper()
 
 	cover := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -177,12 +214,12 @@ func startChain(t *testing.T) chain {
 		t.Fatal(err)
 	}
 	shortID := reality.ShortID{0xab, 0xcd, 1, 2, 3, 4, 5, 6}
-	options := strings.Join([]string{
+	options := strings.Join(append([]string{
 		"reality:private-key=" + reality.EncodeKey(priv.Bytes()),
 		"reality:dest=" + strings.ReplaceAll(cover.Listener.Addr().String(), ":", `\:`),
 		"reality:server-names=" + coverSNI,
 		"reality:short-ids=" + shortID.String(),
-	}, ";")
+	}, extraOptions...), ";")
 
 	serverState := t.TempDir()
 	server := startPT(t, "reality-server",

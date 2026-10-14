@@ -6,6 +6,8 @@ package transport
 import (
 	"context"
 	"net"
+
+	"github.com/hanzamas/reality-pt/shaper"
 )
 
 // Args gives read access to key/value arguments. goptlib's pt.Args satisfies
@@ -19,6 +21,9 @@ type ClientStage interface {
 	// Handshake runs the transport handshake over raw. On error the caller
 	// still owns raw and must close it.
 	Handshake(ctx context.Context, raw net.Conn) (net.Conn, error)
+	// Shaper returns the traffic shaping layer to apply to the tunnel. The
+	// server must use the same one.
+	Shaper() shaper.Shaper
 }
 
 // ClientFactory builds a ClientStage from the arguments of one bridge line.
@@ -31,6 +36,8 @@ type ServerStage interface {
 	// PublicArgs returns the arguments a client needs, for the bridge line.
 	// It must never include secrets.
 	PublicArgs() map[string][]string
+	// Shaper returns the traffic shaping layer to apply to each tunnel.
+	Shaper() shaper.Shaper
 }
 
 // ServerFactory builds a ServerStage from the server transport options.
