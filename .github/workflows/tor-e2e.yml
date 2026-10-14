@@ -95,6 +95,15 @@ jobs:
           done
           docker logs bridge 2>&1 | grep '^Bridge reality ' | tail -1 | tee "$RUNNER_TEMP/line2"
           diff "$RUNNER_TEMP/line1" "$RUNNER_TEMP/line2"
+      - name: Wait for the bridge to have a consensus
+        run: |
+          # A client fetches the consensus through the bridge, so the bridge needs it first.
+          for i in $(seq 1 120); do
+            docker logs bridge 2>&1 | grep -q 'Bootstrapped 100%' && exit 0
+            sleep 2
+          done
+          echo "the bridge did not bootstrap"
+          exit 1
       - name: A real Tor client uses the bridge
         env:
           BIN: ${{ runner.temp }}/bin

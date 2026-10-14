@@ -69,6 +69,9 @@ bridge_pid=$!
 
 wait_for "$WORK/bridge.log" "Registered server transport 'reality'" 120
 wait_for "$WORK/bridge/fingerprint" "RealityCI" 60
+# A client fetches the consensus through the bridge, so the bridge must have it
+# first. Without this wait the client gets 404 from a bridge that is still starting.
+wait_for "$WORK/bridge.log" "Bootstrapped 100%" 240
 fingerprint="$(awk '{print $2}' "$WORK/bridge/fingerprint")"
 echo "bridge fingerprint: $fingerprint"
 
