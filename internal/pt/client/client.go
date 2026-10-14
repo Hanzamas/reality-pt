@@ -1,7 +1,7 @@
-// Package ptclient runs the client half of a managed pluggable transport: it
+// Package client runs the client half of a managed pluggable transport: it
 // listens for SOCKS requests from Tor and, for each one, runs the pipeline
 // dial, handshake, shape, relay.
-package ptclient
+package client
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 
 	pt "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/goptlib"
 
-	"github.com/hanzamas/reality-pt/internal/ptrun"
-	"github.com/hanzamas/reality-pt/internal/relay"
+	"github.com/hanzamas/reality-pt/internal/pt/lifecycle"
+	"github.com/hanzamas/reality-pt/internal/pt/relay"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -89,7 +89,7 @@ type client struct {
 func (c *client) acceptLoop(ctx context.Context, ln *pt.SocksListener) {
 	var (
 		wg      sync.WaitGroup
-		backoff ptrun.Backoff
+		backoff lifecycle.Backoff
 	)
 	defer wg.Wait()
 	for {

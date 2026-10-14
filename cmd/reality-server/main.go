@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/hanzamas/reality-pt/internal/ptrun"
-	"github.com/hanzamas/reality-pt/internal/ptserver"
+	"github.com/hanzamas/reality-pt/internal/pt/lifecycle"
+	"github.com/hanzamas/reality-pt/internal/pt/server"
 	"github.com/hanzamas/reality-pt/internal/version"
 	"github.com/hanzamas/reality-pt/transport/reality"
 )
@@ -17,10 +17,10 @@ func run() int {
 	// stdout belongs to the PT protocol, so logs go to stderr.
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	ctx, stop := ptrun.Context()
+	ctx, stop := lifecycle.Context()
 	defer stop()
 
-	err := ptserver.Run(ctx, ptserver.Config{
+	err := server.Run(ctx, server.Config{
 		Name:    reality.Name,
 		Version: version.Version,
 		Factory: reality.NewServerStage,

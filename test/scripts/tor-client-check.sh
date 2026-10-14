@@ -3,7 +3,7 @@
 # for it to bootstrap, and fetches a page through it.
 #
 #   BIN=/path/to/binaries BRIDGE_LINE='Bridge reality 1.2.3.4:443 FPR public-key=... short-id=... sni=...' \
-#     scripts/tor-client-check.sh
+#     test/scripts/tor-client-check.sh
 #
 # BIN must hold reality-client. Logs end up in $WORK (default: a fresh temp
 # directory).

@@ -1,5 +1,5 @@
 // Package transport defines the stages a pluggable transport is assembled
-// from. The PT runners in internal/ptclient and internal/ptserver know only
+// from. The PT runners in internal/pt/client and internal/pt/server know only
 // these interfaces, so a new transport plugs in without touching them.
 package transport
 

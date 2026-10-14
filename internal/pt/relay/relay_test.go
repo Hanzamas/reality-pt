@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hanzamas/reality-pt/internal/relay"
+	"github.com/hanzamas/reality-pt/internal/pt/relay"
 )
 
 func TestPipeRelaysBothWaysAndClosesBothEnds(t *testing.T) {

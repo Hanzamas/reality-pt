@@ -1,5 +1,5 @@
-// Package ptrun holds the process lifecycle shared by the PT client and server.
-package ptrun
+// Package lifecycle holds the process lifecycle shared by the PT client and server.
+package lifecycle
 
 import (
 	"context"

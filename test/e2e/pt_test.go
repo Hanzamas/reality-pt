@@ -56,7 +56,7 @@ func run(m *testing.M) int {
 	binDir = dir
 
 	for _, name := range []string{"reality-client", "reality-server"} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, exe(name)), "../cmd/"+name)
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, exe(name)), "../../cmd/"+name)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "build %s: %v\n", name, err)

@@ -1,7 +1,7 @@
-// Package ptserver runs the bridge half of a managed pluggable transport: it
+// Package server runs the bridge half of a managed pluggable transport: it
 // accepts tunnel connections and, for each one, runs the pipeline shape,
 // connect to the ORPort, relay.
-package ptserver
+package server
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 
 	pt "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/goptlib"
 
-	"github.com/hanzamas/reality-pt/internal/ptrun"
-	"github.com/hanzamas/reality-pt/internal/relay"
+	"github.com/hanzamas/reality-pt/internal/pt/lifecycle"
+	"github.com/hanzamas/reality-pt/internal/pt/relay"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -110,7 +110,7 @@ func (s *server) saveBridgeLine(name string, listen net.Addr, args map[string][]
 func (s *server) acceptLoop(ctx context.Context, ln net.Listener, stage transport.ServerStage) {
 	var (
 		wg      sync.WaitGroup
-		backoff ptrun.Backoff
+		backoff lifecycle.Backoff
 	)
 	defer wg.Wait()
 	for {
