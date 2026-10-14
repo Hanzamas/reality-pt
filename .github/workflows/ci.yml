@@ -11,13 +11,22 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: stable
       - name: gofmt
+        if: runner.os == 'Linux'
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
@@ -26,7 +35,11 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
-      - run: go test -race -count=1 ./...
+      - name: go test
+        run: |
+          race=""
+          if [ "$RUNNER_OS" = "Linux" ]; then race="-race"; fi
+          go test $race -count=1 ./...
 
   build:
     runs-on: ubuntu-latest
