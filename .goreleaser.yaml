@@ -90,6 +90,9 @@ signs:
       - "--yes"
     output: true
 
+release:
+  prerelease: auto
+
 changelog:
   sort: asc
   filters:

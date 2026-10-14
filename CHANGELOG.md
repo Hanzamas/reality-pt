@@ -2,6 +2,14 @@
 
 All notable changes are listed here. The project follows [semantic versioning](https://semver.org/); before 1.0 anything may change.
 
+## Unreleased
+
+- `morph` shaper: the start of the tunnel follows a real HTTP/2 opening record by record. Experimental, opt-in with `shaper=morph`.
+- Shapers know which end they wrap.
+- Traces of real connections (sizes and directions only), a workflow that collects them, and a lab that measures shapers against traffic they never saw.
+- CensorLab replay of the tunnel through two censor emulators.
+- Repository layout grouped under `internal/pt`, `internal/measure` and `test`; docs, security and contributing notes, dependabot and a lint job.
+
 ## 0.1.0-alpha.1
 
 First release.

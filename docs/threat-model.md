@@ -16,7 +16,7 @@ This page says what the transport is built to resist, what it does not resist, a
 
 ## What it does not resist
 
-- **TLS inside TLS.** Tor's link is TLS, so the tunnel carries a second handshake. Xue et al. (USENIX Security 2024) detect that pattern from record sizes and directions. The `padding` shaper hides runs of equal-size records. It does not hide who speaks when at the start of the connection. See the measurements below.
+- **TLS inside TLS.** Tor's link is TLS, so the tunnel carries a second handshake. Xue et al. (USENIX Security 2024) detect that pattern from record sizes and directions. The `padding` shaper hides runs of equal-size records and nothing else. The `morph` shaper, which follows the opening of a real connection, helps against a censor that does not know it and not against one that does. It adds delay at the start of a connection. See the measurements below.
 - **Traffic analysis in general.** Timing and volume are not shaped.
 - **IP blocking.** A censor that learns the bridge address can block it.
 - **A cover on another network.** The bridge presents a site that is hosted elsewhere. `reality-check -bridge-ip` compares the networks and warns. No source measures how much this matters.
@@ -27,23 +27,42 @@ This page says what the transport is built to resist, what it does not resist, a
 
 ## What was measured
 
-The `lab` runs a bridge, a TLS server that stands in for Tor's link, and an HTTP/2 site that makes browsing, polling, download and upload visits. It records the TLS records of each connection. Three detectors, written for this project, look at the application data records after the tunnel's handshake.
+Two experiments, both on a GitHub runner with local traffic. They run in CI (`ci`, step "Measurements") and print their numbers.
 
-Share of sessions flagged, at a threshold set so that about 5% of the comparison sessions are flagged:
+### Against real traffic
 
-| Detector | No shaper | Padding | Comparison traffic |
-|---|---|---|---|
-| equal-size records | 0.00 | 0.00 | 0.00 |
-| template of an unshaped tunnel | 1.00 | 1.00 | 0.03 |
-| template that includes shaped tunnels | 1.00 | 1.00 | 0.05 |
+The `traces` workflow visited 19 real sites over HTTP/2 and saved the size and direction of the first application data records after the handshake: 152 traces, no content and no addresses (`shaper/data/real-openings.json`). The sites are split in two. The `morph` shaper may follow openings of one half. The other half is the comparison traffic, which the shaper never saw.
+
+A tunnel carries a TLS connection to a stand-in for Tor's link and 40 to 80 cells. Two censors, written for this project, compare the first ten records of a connection with known examples and flag it if it is closer than all but 5% of the comparison traffic:
+
+- **naive:** it knows how an unshaped tunnel starts.
+- **adaptive:** it has also seen tunnels of the shaper being tested.
+
+Share of tunnels flagged (the numbers move by about 0.2 from run to run):
+
+| Shaper | Naive censor | Adaptive censor |
+|---|---|---|
+| none | 1.00 | 1.00 |
+| `padding` | 1.00 | 1.00 |
+| `morph` | 0.40 to 0.45 | 0.60 to 0.90 |
+| real traffic the shapers never saw (false alarms) | 0.03 | 0.00 to 0.14 |
 
 How to read it:
 
-- The comparison traffic is synthetic and the detectors are simple. The numbers show whether shaping moves anything a censor could use. They do not predict what a real censor does.
-- Against the comparison traffic used here, the equal-size detector does not separate the tunnel at all, so it says nothing about padding. An earlier run with only page-load traffic did separate it, and padding brought it from 1.00 to 0.00.
-- The template detectors find the tunnel with or without padding. That matches the paper: padding changes sizes, not the round trips at the start.
+- `padding` changes sizes and not who speaks when, so a censor that matches on the opening exchange still finds every tunnel. This is what Xue et al. (USENIX Security 2024) predict.
+- `morph` follows a real opening record by record, in the same order, so the first records look like an ordinary HTTP/2 connection. It roughly halves what the naive censor flags. It does not hide the tunnel from a censor that has seen it.
+- The reason is visible in the printed samples: a morph tunnel is an exact copy of one of the shipped openings, and the list is public. A censor can hold the same list. A real connection from another site rarely matches one exactly, so exact matches stand out.
+- The detectors are simple and the tunnel is a stand-in for Tor. These numbers show whether shaping changes what can be seen. They do not predict what a real censor does.
 
-A shaper that resists this has to make the opening exchange follow the distribution of real traffic. That needs real traces and is not done.
+### Against static censors
+
+`test/censor/run.sh` records four scenarios and replays them through two censor emulators built on [CensorLab](https://censorlab.cs.umass.edu/): the fully-encrypted-traffic rule after Wu et al. (2023) and an SNI allowlist. Each emulator acts on its own control (random bytes, a listed server name) and leaves the tunnel and ordinary browsing alone. The emulators are written from the papers and may differ from the real rules.
+
+## Next steps for the shaper
+
+- Follow the openings of the cover site itself, so the opening and the SNI agree. The operator would collect them from the cover with the same tool that made `real-openings.json`.
+- Carry the chosen opening in the client's first frame, so the two ends need no shared list and a version mismatch cannot break a connection. Today they must be built with the same list, and the server refuses a client whose list differs.
+- Measure with more real traffic: more sites, video and file transfers, and traffic from a censored network.
 
 ## Operating advice
 

@@ -49,7 +49,7 @@ Set these in `ServerTransportOptions reality ...`.
 | `dest` | required | cover site as `host:port` |
 | `server-names` | required | comma-separated SNI values clients may use, all served by `dest` |
 | `short-ids` | required | comma-separated hex IDs, 2 to 16 digits each |
-| `shaper` | `padding` | `padding` or `none`. Published in the bridge line. |
+| `shaper` | `padding` | `padding`, `morph` or `none`. Published in the bridge line, and the client follows it. `morph` is experimental: it makes the start of the tunnel follow a real connection, adds delay at the start, and needs client and bridge built from the same release. |
 | `max-time-diff` | `5m` | clock difference allowed between client and bridge. `0` turns the check off, which also lets old tokens be replayed for longer. |
 | `min-client-version`, `max-client-version` | unset | `major.minor.patch` range of protocol versions to accept |
 | `proxy-protocol` | off | `1` or `2` to send a PROXY header to the cover, for a cover you run |
