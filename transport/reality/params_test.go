@@ -257,13 +257,22 @@ func TestServerRejectsBadOptionalSettings(t *testing.T) {
 func TestShaperArguments(t *testing.T) {
 	args, _ := newServerArgs(t)
 
-	// Absent: no shaper is published.
+	// Absent: the bridge shapes its traffic and says so in the bridge line.
 	p, err := reality.ParseServerParams(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := p.PublicArgs()["shaper"]; ok {
-		t.Error("PublicArgs lists a shaper when none is set")
+	if got := p.PublicArgs()["shaper"]; len(got) != 1 || got[0] != reality.DefaultShaper {
+		t.Errorf("default shaper in PublicArgs = %v, want [%s]", got, reality.DefaultShaper)
+	}
+
+	// "none" turns it off, and the bridge line says that too.
+	args["shaper"] = "none"
+	if p, err = reality.ParseServerParams(args); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.PublicArgs()["shaper"]; len(got) != 1 || got[0] != "none" {
+		t.Errorf("PublicArgs shaper = %v, want [none]", got)
 	}
 
 	// Set: the bridge line carries it, and the client accepts it.

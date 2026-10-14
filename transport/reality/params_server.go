@@ -83,11 +83,15 @@ type ServerParams struct {
 	Shaper string
 }
 
+// DefaultShaper is what a bridge uses unless its operator picks another.
+const DefaultShaper = "padding"
+
 // ParseServerParams reads ServerParams from the server transport options.
 func ParseServerParams(args transport.Args) (ServerParams, error) {
 	p := ServerParams{
 		MaxTimeDiff:   DefaultMaxTimeDiff,
 		FallbackLimit: DefaultFallbackLimit,
+		Shaper:        DefaultShaper,
 	}
 
 	rawKey, err := required(args, optPrivateKey)
@@ -153,7 +157,7 @@ func ParseServerParams(args transport.Args) (ServerParams, error) {
 	if err := parseFallbackLimit(args, &p.FallbackLimit); err != nil {
 		return p, err
 	}
-	if v, ok := args.Get(optShaper); ok {
+	if v, ok := args.Get(optShaper); ok && v != "" {
 		p.Shaper = strings.ToLower(v)
 	}
 	if _, err := shaper.ByName(p.Shaper); err != nil {
@@ -170,7 +174,7 @@ func (p ServerParams) PublicArgs() map[string][]string {
 		argShortID:    {p.ShortIDs[0].String()},
 		argServerName: {p.ServerNames[0]},
 	}
-	if p.Shaper != "" && p.Shaper != shaper.None {
+	if p.Shaper != "" {
 		args[argShaper] = []string{p.Shaper}
 	}
 	return args

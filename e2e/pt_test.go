@@ -66,16 +66,20 @@ func run(m *testing.M) int {
 	return m.Run()
 }
 
+// A bridge with no shaper option shapes its traffic anyway, and the client
+// learns that from the bridge line.
 func TestTunnelThroughPTBinaries(t *testing.T) {
-	assertEcho(t, startChain(t))
+	c := startChain(t)
+	if c.args["shaper"] != "padding" {
+		t.Fatalf("the bridge did not publish its default shaper: %v", c.args)
+	}
+	assertEcho(t, c)
 }
 
-// The bridge line carries the shaper, so the client picks it up without being
-// told, and both ends frame the traffic the same way.
-func TestTunnelWithTheShaperTheBridgePublishes(t *testing.T) {
-	c := startChain(t, "reality:shaper=padding")
-	if c.args["shaper"] != "padding" {
-		t.Fatalf("the bridge did not publish its shaper: %v", c.args)
+func TestTunnelWithTheShaperTurnedOff(t *testing.T) {
+	c := startChain(t, "reality:shaper=none")
+	if c.args["shaper"] != "none" {
+		t.Fatalf("the bridge did not publish that it has no shaper: %v", c.args)
 	}
 	assertEcho(t, c)
 }
