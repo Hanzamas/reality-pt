@@ -14,6 +14,7 @@ import (
 
 	"github.com/hanzamas/reality-pt/internal/pt/lifecycle"
 	"github.com/hanzamas/reality-pt/internal/pt/relay"
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -152,5 +153,5 @@ func (s *server) serve(ctx context.Context, conn net.Conn, stage transport.Serve
 	})
 	defer stop()
 
-	relay.Pipe(stage.Shaper().Wrap(conn), or)
+	relay.Pipe(stage.Shaper().Wrap(conn, shaper.Server), or)
 }

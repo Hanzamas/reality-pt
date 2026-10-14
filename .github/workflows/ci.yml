@@ -45,7 +45,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           go test ./transport/reality -run 'TestPostHandshakeRecordsMatchTheCover' -v -count=1
-          go test ./internal/measure/lab -run 'TestShapingMovesWhatADetectorSees' -v -count=1
+          go test ./internal/measure/lab -run 'TestShapingMovesWhatADetectorSees|TestShapersAgainstRealTraffic' -v -count=1
 
   lint:
     runs-on: ubuntu-latest

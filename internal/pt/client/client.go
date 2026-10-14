@@ -15,6 +15,7 @@ import (
 
 	"github.com/hanzamas/reality-pt/internal/pt/lifecycle"
 	"github.com/hanzamas/reality-pt/internal/pt/relay"
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport"
 )
 
@@ -157,5 +158,5 @@ func (c *client) connect(ctx context.Context, req pt.SocksRequest) (net.Conn, er
 		_ = raw.Close()
 		return nil, err
 	}
-	return stage.Shaper().Wrap(tunnel), nil
+	return stage.Shaper().Wrap(tunnel, shaper.Client), nil
 }
