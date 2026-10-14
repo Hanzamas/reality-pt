@@ -91,8 +91,23 @@ func (s *server) listen(b pt.Bindaddr) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	pt.SmethodArgs(b.MethodName, tcp.Addr(), pt.Args(stage.PublicArgs()))
+	args := stage.PublicArgs()
+	pt.SmethodArgs(b.MethodName, tcp.Addr(), pt.Args(args))
+	s.saveBridgeLine(b.MethodName, tcp.Addr(), args)
 	return stage.Listen(tcp), nil
+}
+
+// saveBridgeLine writes the bridge line for the operator. It is a courtesy, so
+// a failure is logged and does not stop the bridge.
+func (s *server) saveBridgeLine(name string, listen net.Addr, args map[string][]string) {
+	dir, err := pt.MakeStateDir()
+	if err != nil {
+		s.cfg.Log.Warn("no state directory, bridge line not saved", "err", err)
+		return
+	}
+	if err := writeBridgeLine(dir, name, bridgeLine(name, listen, args)); err != nil {
+		s.cfg.Log.Warn("bridge line not saved", "err", err)
+	}
 }
 
 func (s *server) acceptLoop(ctx context.Context, ln net.Listener) {

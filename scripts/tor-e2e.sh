@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Starts a real Tor bridge and a real Tor client that reach each other through
-# reality-pt, then fetches a page through the client.
+# Starts a real Tor bridge that uses reality-server, then checks it with a real
+# Tor client (scripts/tor-client-check.sh).
 #
 #   BIN=/path/to/binaries scripts/tor-e2e.sh
 #
@@ -13,31 +13,20 @@ set -euo pipefail
 COVER_HOST="${COVER_HOST:-www.cloudflare.com}"
 WORK="${WORK:-$(mktemp -d)}"
 BRIDGE_PT_PORT=9443
-CLIENT_SOCKS_PORT=19050
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p -m 700 "$WORK/bridge" "$WORK/client"
+mkdir -p -m 700 "$WORK/bridge"
 echo "work directory: $WORK"
 
 # Copy tor so a distribution AppArmor profile keyed on /usr/bin/tor does not
-# stop it from starting the transports.
-cp "$(command -v tor)" "$WORK/tor"
-TOR="$WORK/tor"
+# stop it from starting the transport.
+cp "$(command -v tor)" "$WORK/tor-bridge"
 
-pids=()
+bridge_pid=
 cleanup() {
-  for pid in "${pids[@]:-}"; do
-    kill "$pid" 2>/dev/null || true
-  done
+  [ -n "$bridge_pid" ] && kill "$bridge_pid" 2>/dev/null || true
 }
 trap cleanup EXIT
-
-dump_logs() {
-  for f in "$WORK"/bridge.log "$WORK"/client.log; do
-    echo "::group::$f"
-    cat "$f" 2>/dev/null || true
-    echo "::endgroup::"
-  done
-}
 
 # wait_for FILE PATTERN SECONDS
 wait_for() {
@@ -45,7 +34,7 @@ wait_for() {
   until grep -q -- "$pattern" "$file" 2>/dev/null; do
     if [ "$waited" -ge "$limit" ]; then
       echo "timed out after ${limit}s waiting for '$pattern' in $file"
-      dump_logs
+      cat "$WORK/bridge.log" 2>/dev/null || true
       exit 1
     fi
     sleep 2
@@ -75,32 +64,19 @@ ServerTransportListenAddr reality 127.0.0.1:$BRIDGE_PT_PORT
 ServerTransportOptions reality private-key=$private_key dest=$COVER_HOST:443 server-names=$COVER_HOST short-ids=$short_id
 EOF
 
-"$TOR" -f "$WORK/bridge.torrc" >"$WORK/bridge.stdout" 2>&1 &
-pids+=($!)
+"$WORK/tor-bridge" -f "$WORK/bridge.torrc" >"$WORK/bridge.stdout" 2>&1 &
+bridge_pid=$!
 
 wait_for "$WORK/bridge.log" "Registered server transport 'reality'" 120
 wait_for "$WORK/bridge/fingerprint" "RealityCI" 60
 fingerprint="$(awk '{print $2}' "$WORK/bridge/fingerprint")"
 echo "bridge fingerprint: $fingerprint"
 
-cat >"$WORK/client.torrc" <<EOF
-DataDirectory $WORK/client
-Log notice file $WORK/client.log
-SocksPort 127.0.0.1:$CLIENT_SOCKS_PORT
-UseBridges 1
-ClientTransportPlugin reality exec $BIN/reality-client
-Bridge reality 127.0.0.1:$BRIDGE_PT_PORT $fingerprint public-key=$public_key short-id=$short_id sni=$COVER_HOST
-EOF
+# The server also writes the line for the operator. Check that it matches.
+line_file="$WORK/bridge/pt_state/reality_bridge_line.txt"
+test -s "$line_file"
+bridge_line="$(sed -e "s|<IP ADDRESS>|127.0.0.1|" -e "s|<FINGERPRINT>|$fingerprint|" "$line_file")"
+echo "bridge line from the server: $bridge_line"
+grep -q "public-key=$public_key" <<<"$bridge_line"
 
-"$TOR" -f "$WORK/client.torrc" >"$WORK/client.stdout" 2>&1 &
-pids+=($!)
-
-wait_for "$WORK/client.log" "Bootstrapped 100%" 300
-echo "client bootstrapped through the transport"
-
-answer="$(curl --fail --silent --show-error --max-time 90 \
-  --socks5-hostname "127.0.0.1:$CLIENT_SOCKS_PORT" \
-  https://check.torproject.org/api/ip)"
-echo "check.torproject.org says: $answer"
-grep -q '"IsTor":true' <<<"$answer"
-echo "OK: traffic left through the Tor network via reality-pt"
+BIN="$BIN" WORK="$WORK" BRIDGE_LINE="$bridge_line" bash "$HERE/tor-client-check.sh"

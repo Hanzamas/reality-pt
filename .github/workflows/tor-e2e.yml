@@ -1,7 +1,7 @@
 name: tor-e2e
 
-# Runs a real Tor bridge and a real Tor client through reality-pt on a GitHub
-# runner. It needs the public Tor network, so it is kept apart from ci.
+# Runs real Tor bridges and clients through reality-pt on a GitHub runner. It
+# needs the public Tor network, so it is kept apart from ci.
 on:
   push:
     branches: [main]
@@ -9,7 +9,9 @@ on:
       - "transport/**"
       - "internal/**"
       - "cmd/**"
-      - "scripts/tor-e2e.sh"
+      - "scripts/**"
+      - "docker/**"
+      - "Dockerfile"
       - ".github/workflows/tor-e2e.yml"
   workflow_dispatch:
 
@@ -18,6 +20,7 @@ permissions:
 
 jobs:
   tor:
+    name: bridge and client
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -51,3 +54,53 @@ jobs:
             ${{ runner.temp }}/tor-e2e/*.log
             ${{ runner.temp }}/tor-e2e/*.stdout
           if-no-files-found: ignore
+
+  docker-bridge:
+    name: docker bridge image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install Tor for the client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tor
+          sudo systemctl stop tor tor@default 2>/dev/null || true
+      - name: Build the client
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -trimpath -o "$RUNNER_TEMP/bin/reality-client" ./cmd/reality-client
+      - name: Build the bridge image
+        run: docker build -t reality-bridge-test .
+      - name: Start the bridge
+        run: |
+          docker run -d --name bridge --network host -v reality-test:/var/lib/tor \
+            -e REALITY_DEST=www.cloudflare.com:443 -e PT_PORT=9443 -e PUBLIC_IP=127.0.0.1 \
+            reality-bridge-test
+          for i in $(seq 1 90); do
+            docker logs bridge 2>&1 | grep -q '^Bridge reality ' && break
+            sleep 2
+          done
+          docker logs bridge 2>&1 | grep '^Bridge reality ' | tail -1 | tee "$RUNNER_TEMP/line1"
+          test -s "$RUNNER_TEMP/line1"
+      - name: Keys and identity survive a restart
+        run: |
+          docker restart bridge
+          for i in $(seq 1 90); do
+            [ "$(docker logs bridge 2>&1 | grep -c '^Bridge reality ')" -ge 2 ] && break
+            sleep 2
+          done
+          docker logs bridge 2>&1 | grep '^Bridge reality ' | tail -1 | tee "$RUNNER_TEMP/line2"
+          diff "$RUNNER_TEMP/line1" "$RUNNER_TEMP/line2"
+      - name: A real Tor client uses the bridge
+        env:
+          BIN: ${{ runner.temp }}/bin
+          WORK: ${{ runner.temp }}/docker-e2e
+        run: |
+          BRIDGE_LINE="$(cat "$RUNNER_TEMP/line2")" bash scripts/tor-client-check.sh
+      - name: Container logs
+        if: always()
+        run: docker logs bridge 2>&1 | tail -80

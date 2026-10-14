@@ -87,6 +87,31 @@ func TestTunnelThroughPTBinaries(t *testing.T) {
 	}
 }
 
+// The operator needs the bridge line without assembling it by hand.
+func TestServerWritesTheBridgeLine(t *testing.T) {
+	c := startChain(t)
+
+	data, err := os.ReadFile(filepath.Join(c.serverState, "reality_bridge_line.txt"))
+	if err != nil {
+		t.Fatalf("bridge line file: %v", err)
+	}
+	line := string(data)
+	for _, want := range []string{
+		"Bridge reality <IP ADDRESS>:",
+		"<FINGERPRINT>",
+		"public-key=" + c.args["public-key"],
+		"short-id=" + c.args["short-id"],
+		"sni=" + c.args["sni"],
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("bridge line %q does not contain %q", line, want)
+		}
+	}
+	if strings.Contains(line, "private") {
+		t.Errorf("bridge line mentions a private key: %q", line)
+	}
+}
+
 func TestClientRejectsAWrongKey(t *testing.T) {
 	c := startChain(t)
 
@@ -115,6 +140,8 @@ type chain struct {
 	socksAddr  string
 	bridgeAddr string
 	args       map[string]string
+	// serverState is the TOR_PT_STATE_LOCATION of the server.
+	serverState string
 }
 
 // username encodes the bridge line arguments as Tor does in the SOCKS
@@ -157,9 +184,10 @@ func startChain(t *testing.T) chain {
 		"reality:short-ids=" + shortID.String(),
 	}, ";")
 
+	serverState := t.TempDir()
 	server := startPT(t, "reality-server",
 		"TOR_PT_MANAGED_TRANSPORT_VER=1",
-		"TOR_PT_STATE_LOCATION="+t.TempDir(),
+		"TOR_PT_STATE_LOCATION="+serverState,
 		"TOR_PT_SERVER_TRANSPORTS=reality",
 		"TOR_PT_SERVER_BINDADDR=reality-"+freeAddr(t),
 		"TOR_PT_ORPORT="+startEcho(t),
@@ -179,7 +207,7 @@ func startChain(t *testing.T) chain {
 	if len(cmethod) < 4 {
 		t.Fatalf("unexpected CMETHOD line: %q", cmethod)
 	}
-	return chain{socksAddr: cmethod[3], bridgeAddr: bridgeAddr, args: args}
+	return chain{socksAddr: cmethod[3], bridgeAddr: bridgeAddr, args: args, serverState: serverState}
 }
 
 // parseSmethod reads "SMETHOD <name> <addr> ARGS:k=v,k=v".

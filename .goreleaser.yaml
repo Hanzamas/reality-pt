@@ -42,6 +42,24 @@ archives:
       - LICENSES/*
       - README.md
 
+nfpms:
+  - id: reality-pt
+    package_name: reality-pt
+    ids: [client, server, keygen]
+    maintainer: Hanzamas <113221213+Hanzamas@users.noreply.github.com>
+    homepage: https://github.com/Hanzamas/reality-pt
+    license: BSD-3-Clause
+    description: REALITY-style pluggable transport for Tor (client, bridge, key generator).
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/reality-pt/LICENSE
+      - src: NOTICE.md
+        dst: /usr/share/doc/reality-pt/NOTICE.md
+      - src: LICENSES/MPL-2.0.txt
+        dst: /usr/share/doc/reality-pt/MPL-2.0.txt
+
 checksum:
   name_template: checksums.txt
 
