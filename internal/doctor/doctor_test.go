@@ -110,7 +110,7 @@ func TestBadDestination(t *testing.T) {
 
 func TestCymruName(t *testing.T) {
 	tests := map[string]string{
-		"1.2.3.4": "4.3.2.1.origin.asn.cymru.com",
+		"1.2.3.4":     "4.3.2.1.origin.asn.cymru.com",
 		"2001:db8::1": "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.origin6.asn.cymru.com",
 	}
 	for in, want := range tests {
@@ -149,7 +149,7 @@ func TestOriginASN(t *testing.T) {
 func TestNetworkCheckWarnsOnMismatch(t *testing.T) {
 	srv, pool := startSite(t, tls.VersionTLS13, tls.VersionTLS13)
 	r := fakeResolver{
-		"4.3.2.1.origin.asn.cymru.com": {"64500 | 1.2.3.0/24 | ZZ | test | 2020-01-01"},
+		"4.3.2.1.origin.asn.cymru.com":   {"64500 | 1.2.3.0/24 | ZZ | test | 2020-01-01"},
 		"1.0.0.127.origin.asn.cymru.com": {"64999 | 127.0.0.0/8 | ZZ | test | 2020-01-01"},
 	}
 

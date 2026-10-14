@@ -10,8 +10,8 @@ import (
 
 // Offsets inside the first TLS record when it carries a ClientHello.
 const (
-	recordHeaderLen = 5
-	recordTypeHandshake = 0x16
+	recordHeaderLen      = 5
+	recordTypeHandshake  = 0x16
 	handshakeClientHello = 0x01
 
 	helloTypeOffset      = recordHeaderLen          // handshake message type

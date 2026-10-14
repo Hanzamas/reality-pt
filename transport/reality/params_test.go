@@ -235,12 +235,12 @@ func TestServerOptionalSettings(t *testing.T) {
 
 func TestServerRejectsBadOptionalSettings(t *testing.T) {
 	tests := map[string]func(mapArgs){
-		"version with two parts":    func(a mapArgs) { a["min-client-version"] = "1.2" },
-		"version part above 255":    func(a mapArgs) { a["max-client-version"] = "1.2.256" },
-		"version with a word":       func(a mapArgs) { a["min-client-version"] = "1.x.3" },
-		"proxy protocol 3":          func(a mapArgs) { a["proxy-protocol"] = "3" },
-		"proxy protocol word":       func(a mapArgs) { a["proxy-protocol"] = "yes" },
-		"negative fallback rate":    func(a mapArgs) { a["fallback-rate"] = "-5" },
+		"version with two parts":      func(a mapArgs) { a["min-client-version"] = "1.2" },
+		"version part above 255":      func(a mapArgs) { a["max-client-version"] = "1.2.256" },
+		"version with a word":         func(a mapArgs) { a["min-client-version"] = "1.x.3" },
+		"proxy protocol 3":            func(a mapArgs) { a["proxy-protocol"] = "3" },
+		"proxy protocol word":         func(a mapArgs) { a["proxy-protocol"] = "yes" },
+		"negative fallback rate":      func(a mapArgs) { a["fallback-rate"] = "-5" },
 		"fallback after not a number": func(a mapArgs) { a["fallback-after"] = "lots" },
 	}
 	for name, mutate := range tests {
