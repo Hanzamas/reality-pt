@@ -1,6 +1,7 @@
 package reality_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
@@ -170,4 +171,79 @@ func TestProbeSeesTheCoverSite(t *testing.T) {
 	if !certs[0].Equal(b.cover.Certificate()) {
 		t.Fatal("probe did not receive the cover site's certificate")
 	}
+}
+
+// Every profile in the table must get through the real server, which is
+// stricter about the ClientHello than a normal TLS server.
+func TestEveryFingerprintCompletesAHandshake(t *testing.T) {
+	b := startBridge(t)
+
+	for _, name := range reality.Fingerprints() {
+		t.Run(name, func(t *testing.T) {
+			p := b.params()
+			p.Fingerprint = name
+
+			conn, err := dial(t, b, p)
+			if err != nil {
+				t.Fatalf("handshake with fingerprint %q: %v", name, err)
+			}
+			_ = conn.SetDeadline(time.Now().Add(testTimeout))
+			if _, err := conn.Write([]byte("x")); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if _, err := io.ReadFull(conn, make([]byte, 1)); err != nil {
+				t.Fatalf("read: %v", err)
+			}
+		})
+	}
+}
+
+// An active prober must not be able to tell the bridge from the cover site:
+// each probe gets the same answer from both.
+func TestProbesGetTheSameAnswerAsTheCoverSite(t *testing.T) {
+	b := startBridge(t)
+	coverAddr := b.cover.Listener.Addr().String()
+
+	probes := map[string][]byte{
+		"HTTP request":      []byte("GET / HTTP/1.1\r\nHost: cover.test\r\n\r\n"),
+		"garbage":           bytes.Repeat([]byte{0xa5}, 64),
+		"truncated TLS":     {0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00},
+		"empty connection":  nil,
+		"TLS alert record":  {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28},
+		"unknown record":    {0x63, 0x03, 0x03, 0x00, 0x01, 0x00},
+		"oversized length":  {0x16, 0x03, 0x01, 0xff, 0xff},
+		"SSLv2-style hello": {0x80, 0x2e, 0x01, 0x03, 0x01},
+	}
+	for name, payload := range probes {
+		t.Run(name, func(t *testing.T) {
+			viaBridge := probe(t, b.addr, payload)
+			direct := probe(t, coverAddr, payload)
+			if !bytes.Equal(viaBridge, direct) {
+				t.Fatalf("answers differ\n via bridge: %q\n from cover:  %q", viaBridge, direct)
+			}
+		})
+	}
+}
+
+// probe sends payload, half-closes, and returns everything the peer sends
+// back until it closes or goes quiet.
+func probe(t *testing.T, addr string, payload []byte) []byte {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, testTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if len(payload) > 0 {
+		if _, err := conn.Write(payload); err != nil {
+			t.Fatalf("write probe: %v", err)
+		}
+	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.CloseWrite()
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	answer, _ := io.ReadAll(conn)
+	return answer
 }

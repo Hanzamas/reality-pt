@@ -1,12 +1,20 @@
 name: tidy
 
 # Manual job: runs gofmt and go mod tidy in CI and commits the result, so
-# nobody needs a Go toolchain on their own machine.
+# nobody needs a Go toolchain on their own machine. Pass modules in the "get"
+# input, for example "github.com/refraction-networking/utls@master", to
+# upgrade them first.
 on:
   workflow_dispatch:
+    inputs:
+      get:
+        description: Space-separated modules to pass to go get
+        required: false
+        default: ""
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   tidy:
@@ -16,9 +24,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      - name: go get
+        if: inputs.get != ''
+        run: go get ${{ inputs.get }}
       - run: gofmt -w .
       - run: go mod tidy
-      - name: Commit changes
+      - name: Commit changes and start CI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "Nothing to commit."
@@ -29,3 +42,5 @@ jobs:
           git add -A
           git commit -m "Run gofmt and go mod tidy"
           git push
+          # Pushes made with GITHUB_TOKEN do not start workflows, so start CI by hand.
+          gh workflow run ci.yml --ref "${GITHUB_REF_NAME}"
