@@ -183,3 +183,149 @@ func TestPublicArgsRoundTripIntoClientParams(t *testing.T) {
 		t.Errorf("round trip changed the values: %+v", cp)
 	}
 }
+
+func TestServerDefaults(t *testing.T) {
+	args, _ := newServerArgs(t)
+	delete(args, "max-time-diff")
+
+	p, err := reality.ParseServerParams(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTimeDiff != reality.DefaultMaxTimeDiff {
+		t.Errorf("max time diff = %v, want the default %v", p.MaxTimeDiff, reality.DefaultMaxTimeDiff)
+	}
+	if p.FallbackLimit != reality.DefaultFallbackLimit {
+		t.Errorf("fallback limit = %+v, want the default %+v", p.FallbackLimit, reality.DefaultFallbackLimit)
+	}
+	if p.MinClientVersion != nil || p.MaxClientVersion != nil || p.ProxyProtocol != 0 {
+		t.Errorf("optional settings are not off by default: %+v", p)
+	}
+}
+
+func TestServerOptionalSettings(t *testing.T) {
+	args, _ := newServerArgs(t)
+	args["max-time-diff"] = "0"
+	args["min-client-version"] = "0.1.0"
+	args["max-client-version"] = "1.255.3"
+	args["proxy-protocol"] = "2"
+	args["fallback-after"] = "100"
+	args["fallback-rate"] = "0"
+
+	p, err := reality.ParseServerParams(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTimeDiff != 0 {
+		t.Errorf("max-time-diff=0 did not turn the check off: %v", p.MaxTimeDiff)
+	}
+	if p.MinClientVersion == nil || *p.MinClientVersion != (reality.Version{0, 1, 0}) {
+		t.Errorf("min client version = %v", p.MinClientVersion)
+	}
+	if p.MaxClientVersion == nil || *p.MaxClientVersion != (reality.Version{1, 255, 3}) {
+		t.Errorf("max client version = %v", p.MaxClientVersion)
+	}
+	if p.ProxyProtocol != 2 {
+		t.Errorf("proxy protocol = %d, want 2", p.ProxyProtocol)
+	}
+	if p.FallbackLimit.AfterBytes != 100 || p.FallbackLimit.BytesPerSec != 0 {
+		t.Errorf("fallback limit = %+v", p.FallbackLimit)
+	}
+}
+
+func TestServerRejectsBadOptionalSettings(t *testing.T) {
+	tests := map[string]func(mapArgs){
+		"version with two parts":    func(a mapArgs) { a["min-client-version"] = "1.2" },
+		"version part above 255":    func(a mapArgs) { a["max-client-version"] = "1.2.256" },
+		"version with a word":       func(a mapArgs) { a["min-client-version"] = "1.x.3" },
+		"proxy protocol 3":          func(a mapArgs) { a["proxy-protocol"] = "3" },
+		"proxy protocol word":       func(a mapArgs) { a["proxy-protocol"] = "yes" },
+		"negative fallback rate":    func(a mapArgs) { a["fallback-rate"] = "-5" },
+		"fallback after not a number": func(a mapArgs) { a["fallback-after"] = "lots" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			args, _ := newServerArgs(t)
+			mutate(args)
+			if _, err := reality.ParseServerParams(args); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+func TestVersion(t *testing.T) {
+	v, err := reality.ParseVersion(" 1.20.255 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != (reality.Version{1, 20, 255}) || v.String() != "1.20.255" {
+		t.Fatalf("version = %v (%s)", [3]byte(v), v)
+	}
+}
+
+func FuzzParseShortID(f *testing.F) {
+	f.Add("abcd")
+	f.Add("")
+	f.Add("0011223344556677")
+	f.Fuzz(func(t *testing.T, s string) {
+		id, err := reality.ParseShortID(s)
+		if err != nil {
+			return
+		}
+		again, err := reality.ParseShortID(id.String())
+		if err != nil || again != id {
+			t.Fatalf("round trip of %q failed: %v %v", s, again, err)
+		}
+	})
+}
+
+func FuzzParseClientParams(f *testing.F) {
+	key := reality.EncodeKey(bytes.Repeat([]byte{7}, 32))
+	f.Add(key, "abcd", "cover.example", "chrome")
+	f.Add("", "", "", "")
+	f.Fuzz(func(t *testing.T, publicKey, shortID, sni, fingerprint string) {
+		p, err := reality.ParseClientParams(mapArgs{
+			"public-key":  publicKey,
+			"short-id":    shortID,
+			"sni":         sni,
+			"fingerprint": fingerprint,
+		})
+		if err != nil {
+			return
+		}
+		if p.ServerName == "" || p.ServerName != strings.ToLower(p.ServerName) {
+			t.Fatalf("accepted a bad server name %q", p.ServerName)
+		}
+		if _, err := reality.NewClient(p); err != nil {
+			t.Fatalf("accepted parameters that NewClient rejects: %v", err)
+		}
+	})
+}
+
+func FuzzParseServerParams(f *testing.F) {
+	key := reality.EncodeKey(bytes.Repeat([]byte{7}, 32))
+	f.Add(key, "cover.example:443", "cover.example", "abcd", "2m")
+	f.Add("", "", "", "", "")
+	f.Fuzz(func(t *testing.T, privateKey, dest, names, ids, maxDiff string) {
+		p, err := reality.ParseServerParams(mapArgs{
+			"private-key":   privateKey,
+			"dest":          dest,
+			"server-names":  names,
+			"short-ids":     ids,
+			"max-time-diff": maxDiff,
+		})
+		if err != nil {
+			return
+		}
+		if len(p.ServerNames) == 0 || len(p.ShortIDs) == 0 || p.PrivateKey == nil {
+			t.Fatalf("accepted incomplete parameters: %+v", p)
+		}
+		public := p.PublicArgs()
+		for _, key := range []string{"public-key", "short-id", "sni"} {
+			if len(public[key]) != 1 {
+				t.Fatalf("PublicArgs is missing %q", key)
+			}
+		}
+	})
+}

@@ -46,10 +46,6 @@ const (
 	hkdfInfo   = "REALITY"
 )
 
-// clientVersion goes into the token. The server checks it only when it is
-// configured with a minimum or maximum client version.
-var clientVersion = [3]byte{0, 1, 0}
-
 // ErrNotBridge means the peer did not prove to be the configured bridge. The
 // public key or short ID is wrong, or the connection reached a cover site.
 var ErrNotBridge = errors.New("reality: peer is not the configured bridge: wrong key or short ID, or a cover site answered")
@@ -167,7 +163,7 @@ func (c *Client) sealHello(uc *utls.UConn) ([]byte, error) {
 	sessionID := make([]byte, sessionIDLen)
 	copy(hello.Raw[sessionIDOffset:], sessionID)
 
-	copy(sessionID[0:3], clientVersion[:])
+	copy(sessionID[0:3], ProtocolVersion[:])
 	binary.BigEndian.PutUint32(sessionID[4:8], uint32(time.Now().Unix()))
 	copy(sessionID[8:tokenLen], c.params.ShortID[:])
 

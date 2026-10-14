@@ -4,6 +4,7 @@ import (
 	"crypto/ecdh"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,12 +13,44 @@ import (
 
 // Names of the server transport options in torrc.
 const (
-	optPrivateKey  = "private-key"
-	optDest        = "dest"
-	optServerNames = "server-names"
-	optShortIDs    = "short-ids"
-	optMaxTimeDiff = "max-time-diff"
+	optPrivateKey       = "private-key"
+	optDest             = "dest"
+	optServerNames      = "server-names"
+	optShortIDs         = "short-ids"
+	optMaxTimeDiff      = "max-time-diff"
+	optMinClientVersion = "min-client-version"
+	optMaxClientVersion = "max-client-version"
+	optProxyProtocol    = "proxy-protocol"
+	optFallbackAfter    = "fallback-after"
+	optFallbackRate     = "fallback-rate"
+	optFallbackBurst    = "fallback-burst"
 )
+
+// DefaultMaxTimeDiff is how far a client clock may differ from the bridge
+// clock. Tor itself needs a clock within a few hours, so five minutes only
+// turns away clients that were already broken.
+const DefaultMaxTimeDiff = 5 * time.Minute
+
+// FallbackLimit caps what one connection may move to or from the cover site,
+// so the bridge cannot serve as a free relay to that site. The limit applies
+// to each direction. A zero BytesPerSec turns it off.
+type FallbackLimit struct {
+	// AfterBytes pass at full speed before the rate applies.
+	AfterBytes uint64
+	// BytesPerSec is the sustained rate after that.
+	BytesPerSec uint64
+	// BurstBytesPerSec is the bucket size. Values below BytesPerSec count as
+	// BytesPerSec.
+	BurstBytesPerSec uint64
+}
+
+// DefaultFallbackLimit lets a prober fetch an ordinary page and slows anything
+// bulkier.
+var DefaultFallbackLimit = FallbackLimit{
+	AfterBytes:       2 << 20,
+	BytesPerSec:      1 << 20,
+	BurstBytesPerSec: 2 << 20,
+}
 
 // ServerParams configures a bridge.
 type ServerParams struct {
@@ -34,11 +67,23 @@ type ServerParams struct {
 	// MaxTimeDiff bounds the clock difference between client and bridge.
 	// Zero disables the check.
 	MaxTimeDiff time.Duration
+	// MinClientVersion and MaxClientVersion, when set, turn away clients
+	// outside that range of protocol versions.
+	MinClientVersion, MaxClientVersion *Version
+	// ProxyProtocol is 1 or 2 to send a PROXY protocol header to the cover
+	// site, 0 to send none. Use it when the cover site is yours and logs
+	// client addresses.
+	ProxyProtocol byte
+	// FallbackLimit applies to forwarding to the cover site.
+	FallbackLimit FallbackLimit
 }
 
 // ParseServerParams reads ServerParams from the server transport options.
 func ParseServerParams(args transport.Args) (ServerParams, error) {
-	var p ServerParams
+	p := ServerParams{
+		MaxTimeDiff:   DefaultMaxTimeDiff,
+		FallbackLimit: DefaultFallbackLimit,
+	}
 
 	rawKey, err := required(args, optPrivateKey)
 	if err != nil {
@@ -85,8 +130,23 @@ func ParseServerParams(args transport.Args) (ServerParams, error) {
 
 	if v, ok := args.Get(optMaxTimeDiff); ok && v != "" {
 		if p.MaxTimeDiff, err = time.ParseDuration(v); err != nil || p.MaxTimeDiff < 0 {
-			return p, fmt.Errorf("reality: %s must be a non-negative duration such as 2m", optMaxTimeDiff)
+			return p, fmt.Errorf("reality: %s must be a non-negative duration such as 2m, or 0 to turn the check off", optMaxTimeDiff)
 		}
+	}
+	if p.MinClientVersion, err = optionalVersion(args, optMinClientVersion); err != nil {
+		return p, err
+	}
+	if p.MaxClientVersion, err = optionalVersion(args, optMaxClientVersion); err != nil {
+		return p, err
+	}
+	if v, ok := args.Get(optProxyProtocol); ok && v != "" {
+		if v != "1" && v != "2" {
+			return p, fmt.Errorf("reality: %s must be 1 or 2", optProxyProtocol)
+		}
+		p.ProxyProtocol = v[0] - '0'
+	}
+	if err := parseFallbackLimit(args, &p.FallbackLimit); err != nil {
+		return p, err
 	}
 	return p, nil
 }
@@ -99,6 +159,42 @@ func (p ServerParams) PublicArgs() map[string][]string {
 		argShortID:    {p.ShortIDs[0].String()},
 		argServerName: {p.ServerNames[0]},
 	}
+}
+
+// optionalVersion reads a version argument. It returns nil if absent.
+func optionalVersion(args transport.Args, key string) (*Version, error) {
+	raw, ok := args.Get(key)
+	if !ok || raw == "" {
+		return nil, nil
+	}
+	v, err := ParseVersion(raw)
+	if err != nil {
+		return nil, fmt.Errorf("reality: %s: %w", key, err)
+	}
+	return &v, nil
+}
+
+// parseFallbackLimit overrides the fields of limit that the arguments set.
+func parseFallbackLimit(args transport.Args, limit *FallbackLimit) error {
+	for _, field := range []struct {
+		key string
+		dst *uint64
+	}{
+		{optFallbackAfter, &limit.AfterBytes},
+		{optFallbackRate, &limit.BytesPerSec},
+		{optFallbackBurst, &limit.BurstBytesPerSec},
+	} {
+		raw, ok := args.Get(field.key)
+		if !ok || raw == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(raw, 10, 63)
+		if err != nil {
+			return fmt.Errorf("reality: %s must be a number of bytes", field.key)
+		}
+		*field.dst = n
+	}
+	return nil
 }
 
 // requiredList returns the non-empty items of a comma-separated argument.
