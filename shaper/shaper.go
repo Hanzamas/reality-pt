@@ -10,6 +10,8 @@ import "net"
 
 // Shaper wraps a connection with a traffic shaping layer.
 type Shaper interface {
+	// Wrap returns a connection that shapes what is written to c and undoes
+	// the shaping on what is read. Closing the result must close c.
 	Wrap(c net.Conn) net.Conn
 }
 

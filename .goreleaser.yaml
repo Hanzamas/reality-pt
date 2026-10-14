@@ -1,0 +1,53 @@
+version: 2
+
+builds:
+  - id: client
+    main: ./cmd/reality-client
+    binary: reality-client
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/hanzamas/reality-pt/internal/version.Version={{.Version}}
+
+  - id: server
+    main: ./cmd/reality-server
+    binary: reality-server
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/hanzamas/reality-pt/internal/version.Version={{.Version}}
+
+  - id: keygen
+    main: ./cmd/reality-keygen
+    binary: reality-keygen
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE.md
+      - LICENSES/*
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
