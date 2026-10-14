@@ -11,6 +11,10 @@ set -euo pipefail
 
 : "${BIN:?set BIN to the directory with the reality binaries}"
 COVER_HOST="${COVER_HOST:-www.cloudflare.com}"
+# Optional: the shaper the bridge uses (padding, morph, none). Empty means its default.
+SHAPER="${SHAPER:-}"
+shaper_option=""
+[ -n "$SHAPER" ] && shaper_option=" shaper=$SHAPER"
 WORK="${WORK:-$(mktemp -d)}"
 BRIDGE_PT_PORT=9443
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -61,7 +65,7 @@ ExitPolicy reject *:*
 Nickname RealityCI
 ServerTransportPlugin reality exec $BIN/reality-server
 ServerTransportListenAddr reality 127.0.0.1:$BRIDGE_PT_PORT
-ServerTransportOptions reality private-key=$private_key dest=$COVER_HOST:443 server-names=$COVER_HOST short-ids=$short_id
+ServerTransportOptions reality private-key=$private_key dest=$COVER_HOST:443 server-names=$COVER_HOST short-ids=$short_id$shaper_option
 EOF
 
 "$WORK/tor-bridge" -f "$WORK/bridge.torrc" >"$WORK/bridge.stdout" 2>&1 &

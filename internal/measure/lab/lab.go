@@ -27,6 +27,7 @@ import (
 
 	"github.com/hanzamas/reality-pt/internal/measure/traffic"
 	"github.com/hanzamas/reality-pt/internal/pt/relay"
+	"github.com/hanzamas/reality-pt/shaper"
 	"github.com/hanzamas/reality-pt/transport/reality"
 )
 
@@ -57,8 +58,10 @@ var Local = Placement{Bridge: "127.0.0.1", Side: "127.0.0.1"}
 type Bridge struct {
 	// Addr is where clients connect.
 	Addr string
-	// Params are the client parameters for this bridge, shaper included.
+	// Params are the client parameters for this bridge.
 	Params reality.ClientParams
+
+	shaper shaper.Shaper
 }
 
 // StartBridge starts a bridge on 127.0.0.1 that uses the named shaper.
@@ -67,8 +70,20 @@ func StartBridge(t testing.TB, shaperName string) *Bridge {
 	return StartBridgeAt(t, Local, shaperName)
 }
 
-// StartBridgeAt starts a bridge at the given placement.
+// StartBridgeAt starts a bridge at the given placement that uses the named
+// shaper.
 func StartBridgeAt(t testing.TB, p Placement, shaperName string) *Bridge {
+	t.Helper()
+	sh, err := shaper.ByName(shaperName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return StartBridgeWith(t, p, sh)
+}
+
+// StartBridgeWith starts a bridge that uses the given shaper on both ends. The
+// lab applies the shaper itself, so the transport runs without one.
+func StartBridgeWith(t testing.TB, p Placement, sh shaper.Shaper) *Bridge {
 	t.Helper()
 
 	cover := StartSite(t, p.Side)
@@ -84,7 +99,7 @@ func StartBridgeAt(t testing.TB, p Placement, shaperName string) *Bridge {
 		Dest:        cover.Listener.Addr().String(),
 		ServerNames: []string{SNI},
 		ShortIDs:    []reality.ShortID{shortID},
-		Shaper:      shaperName,
+		Shaper:      shaper.None,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,14 +123,15 @@ func StartBridgeAt(t testing.TB, p Placement, shaperName string) *Bridge {
 					_ = conn.Close()
 					return
 				}
-				relay.Pipe(server.Shaper().Wrap(conn), or)
+				relay.Pipe(sh.Wrap(conn, shaper.Server), or)
 			}()
 		}
 	}()
 
 	b := &Bridge{
 		Addr:   inner.Addr().String(),
-		Params: reality.ClientParams{ServerName: SNI, ShortID: shortID, Shaper: shaperName},
+		Params: reality.ClientParams{ServerName: SNI, ShortID: shortID},
+		shaper: sh,
 	}
 	copy(b.Params.PublicKey[:], priv.PublicKey().Bytes())
 	return b
@@ -155,7 +171,7 @@ func (b *Bridge) session(t testing.TB, addr string, rng *mrand.Rand) {
 		_ = raw.Close()
 		t.Fatalf("tunnel handshake: %v", err)
 	}
-	conn := client.Shaper().Wrap(tunnel)
+	conn := b.shaper.Wrap(tunnel, shaper.Client)
 
 	link := tls.Client(conn, &tls.Config{ServerName: "link.test", InsecureSkipVerify: true})
 	_ = link.SetDeadline(time.Now().Add(timeout))

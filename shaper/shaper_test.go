@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestNoopReturnsSameConn(t *testing.T) {
 	defer b.Close()
 
 	var s Shaper = Noop{}
-	if got := s.Wrap(a); got != a {
+	if got := s.Wrap(a, Client); got != a {
 		t.Fatalf("Noop.Wrap returned a different conn: got %v, want %v", got, a)
 	}
 }
@@ -31,7 +32,7 @@ func TestByName(t *testing.T) {
 	if _, err := ByName("rot13"); err == nil {
 		t.Error("an unknown shaper was accepted")
 	}
-	if got := Names(); len(got) != 2 || got[0] != "none" || got[1] != "padding" {
+	if got := Names(); len(got) != 3 || got[0] != "morph" || got[1] != "none" || got[2] != "padding" {
 		t.Errorf("Names() = %v", got)
 	}
 }
@@ -50,7 +51,7 @@ func wirePair(t *testing.T, s Shaper) (shaped, peer net.Conn, frames *[]int) {
 		sizes = append(sizes, n)
 		mu.Unlock()
 	}}
-	return s.Wrap(tapped), s.Wrap(b), &sizes
+	return s.Wrap(tapped, Client), s.Wrap(b, Client), &sizes
 }
 
 type tapConn struct {
@@ -163,7 +164,7 @@ func TestPaddingSendsDecoysThatTheReaderSkips(t *testing.T) {
 		tapped := &tapConn{Conn: a, onWrite: func(n int) { mu.Lock(); sizes = append(sizes, n); mu.Unlock() }}
 
 		// The reading end needs no decoys of its own: nothing reads them here.
-		reader := NewPadding(PaddingConfig{}).Wrap(b)
+		reader := NewPadding(PaddingConfig{}).Wrap(b, Client)
 		got := make(chan []byte, 1)
 		go func() {
 			_ = reader.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -171,7 +172,7 @@ func TestPaddingSendsDecoysThatTheReaderSkips(t *testing.T) {
 			got <- data
 		}()
 
-		writer := NewPadding(cfg).Wrap(tapped)
+		writer := NewPadding(cfg).Wrap(tapped, Client)
 		// A real write waits for the decoys, so every frame but the last is a
 		// decoy.
 		if _, err := writer.Write([]byte("real")); err != nil {
@@ -238,7 +239,7 @@ func TestPaddingKeepsFramesInsideOneRecord(t *testing.T) {
 func TestPaddingReadFailsOnATruncatedFrame(t *testing.T) {
 	a, b := net.Pipe()
 	defer a.Close()
-	shaped := NewPadding(DefaultPadding).Wrap(b)
+	shaped := NewPadding(DefaultPadding).Wrap(b, Client)
 
 	// A header that promises 10 payload bytes and 5 padding bytes, then EOF.
 	go func() {
@@ -262,8 +263,230 @@ func FuzzPaddingRead(f *testing.F) {
 		defer b.Close()
 		go func() { _, _ = a.Write(wire); _ = a.Close() }()
 
-		shaped := NewPadding(DefaultPadding).Wrap(b)
+		shaped := NewPadding(DefaultPadding).Wrap(b, Client)
 		_ = shaped.SetReadDeadline(time.Now().Add(2 * time.Second))
 		_, _ = io.Copy(io.Discard, shaped) // must not panic or hang
 	})
+}
+
+func TestEmbeddedOpeningsParse(t *testing.T) {
+	openings, err := ParseOpenings(realOpenings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(openings) < 50 {
+		t.Fatalf("only %d openings are embedded", len(openings))
+	}
+	for i, o := range openings {
+		for _, s := range o.Steps {
+			if s.Len <= 0 || s.Len > 16384+256 {
+				t.Fatalf("opening %d has a record of %d bytes", i, s.Len)
+			}
+		}
+	}
+	if _, err := ByName("morph"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseOpenings([]byte(`{"traces":[]}`)); err == nil {
+		t.Error("an empty set of openings was accepted")
+	}
+	if _, err := ParseOpenings([]byte(`not json`)); err == nil {
+		t.Error("bad JSON was accepted")
+	}
+}
+
+// wireLog notes the frames written by either end of a pair, in order.
+type wireLog struct {
+	mu     sync.Mutex
+	events []wireEvent
+}
+
+type wireEvent struct {
+	up   bool
+	size int
+}
+
+func (l *wireLog) add(up bool, size int) {
+	l.mu.Lock()
+	l.events = append(l.events, wireEvent{up, size})
+	l.mu.Unlock()
+}
+
+func (l *wireLog) snapshot() []wireEvent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]wireEvent(nil), l.events...)
+}
+
+// morphPair connects a client end and a server end, both shaped by m, through a
+// pipe that notes every frame in the order it is written.
+func morphPair(t *testing.T, m *Morph) (client, server net.Conn, log *wireLog) {
+	t.Helper()
+	a, b := net.Pipe()
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+	log = &wireLog{}
+	client = m.Wrap(&tapConn{Conn: a, onWrite: func(n int) { log.add(true, n) }}, Client)
+	server = m.Wrap(&tapConn{Conn: b, onWrite: func(n int) { log.add(false, n) }}, Server)
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+	return client, server, log
+}
+
+func testOpening() []Opening {
+	// Records are body lengths: a frame is 17 bytes smaller.
+	return []Opening{{Steps: []OpeningStep{
+		{Up: true, Len: 100 + tlsRecordOverhead},
+		{Up: false, Len: 300 + tlsRecordOverhead},
+		{Up: true, Len: 200 + tlsRecordOverhead},
+		{Up: false, Len: 80 + tlsRecordOverhead},
+	}}}
+}
+
+func TestMorphFollowsTheOpeningInOrder(t *testing.T) {
+	m := NewMorph(MorphConfig{Openings: testOpening(), Idle: 5 * time.Millisecond})
+	client, server, log := morphPair(t, m)
+
+	got := make(chan []byte, 1)
+	go func() {
+		_ = server.SetReadDeadline(time.Now().Add(5 * time.Second))
+		buf := make([]byte, 5)
+		_, _ = io.ReadFull(server, buf)
+		got <- buf
+	}()
+	if _, err := client.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if data := <-got; string(data) != "hello" {
+		t.Fatalf("the server read %q, want hello", data)
+	}
+
+	// The data took the client's first record. The rest of the opening is
+	// filled by decoys, each end at its own turn.
+	want := []wireEvent{{true, 100}, {false, 300}, {true, 200}, {false, 80}}
+	waitUntil(t, 5*time.Second, func() bool { return len(log.snapshot()) >= len(want) })
+	for i, w := range want {
+		if got := log.snapshot()[i]; got != w {
+			t.Errorf("frame %d = %+v, want %+v", i, got, w)
+		}
+	}
+}
+
+func waitUntil(t *testing.T, limit time.Duration, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("condition not met within %v", limit)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestMorphCarriesDataBothWays(t *testing.T) {
+	m := NewMorph(MorphConfig{Openings: testOpening(), Idle: 5 * time.Millisecond, Later: DefaultPadding})
+	client, server, _ := morphPair(t, m)
+
+	up := bytes.Repeat([]byte("up"), 4000)
+	down := bytes.Repeat([]byte("down"), 3000)
+	var wg sync.WaitGroup
+	check := func(name string, from, to net.Conn, data []byte) {
+		defer wg.Done()
+		go func() { _, _ = from.Write(data) }()
+		got := make([]byte, len(data))
+		_ = to.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if _, err := io.ReadFull(to, got); err != nil {
+			t.Errorf("%s: %v", name, err)
+			return
+		}
+		if !bytes.Equal(got, data) {
+			t.Errorf("%s: the data changed", name)
+		}
+	}
+	wg.Add(2)
+	go check("client to server", client, server, up)
+	go check("server to client", server, client, down)
+	wg.Wait()
+}
+
+// A new connection follows a different opening each time, so run several. A
+// deadlock between the two ends would show here.
+func TestMorphRoundTripWithTheEmbeddedOpenings(t *testing.T) {
+	m, err := DefaultMorph()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 15; i++ {
+		client, server, _ := morphPair(t, m)
+		request := bytes.Repeat([]byte("q"), 700)
+		reply := bytes.Repeat([]byte("r"), 5000)
+
+		done := make(chan error, 1)
+		go func() {
+			buf := make([]byte, len(request))
+			_ = server.SetReadDeadline(time.Now().Add(10 * time.Second))
+			if _, err := io.ReadFull(server, buf); err != nil {
+				done <- err
+				return
+			}
+			_, err := server.Write(reply)
+			done <- err
+		}()
+		if _, err := client.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]byte, len(reply))
+		_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
+		if _, err := io.ReadFull(client, got); err != nil {
+			t.Fatalf("round %d: %v", i, err)
+		}
+		if !bytes.Equal(got, reply) {
+			t.Fatalf("round %d: the reply changed", i)
+		}
+		if err := <-done; err != nil {
+			t.Fatalf("round %d: %v", i, err)
+		}
+	}
+}
+
+func TestMorphRefusesADifferentListOfOpenings(t *testing.T) {
+	two := append(testOpening(), testOpening()...)
+	three := append(two, testOpening()...)
+	a, b := net.Pipe()
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+	client := NewMorph(MorphConfig{Openings: two, Idle: 5 * time.Millisecond}).Wrap(a, Client)
+	server := NewMorph(MorphConfig{Openings: three, Idle: 5 * time.Millisecond}).Wrap(b, Server)
+
+	go func() { _, _ = client.Write([]byte("hello")) }()
+	_ = server.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := server.Read(make([]byte, 5)); !errors.Is(err, errMorphTable) {
+		t.Fatalf("Read = %v, want errMorphTable", err)
+	}
+}
+
+func TestMorphReadHonoursItsDeadline(t *testing.T) {
+	m := NewMorph(MorphConfig{Openings: testOpening(), Idle: time.Hour})
+	_, server, _ := morphPair(t, m)
+
+	_ = server.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	start := time.Now()
+	_, err := server.Read(make([]byte, 1))
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("Read = %v, want a deadline error", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("the deadline took far too long")
+	}
+}
+
+func TestMorphWithoutOpeningsFallsBackToPadding(t *testing.T) {
+	m := NewMorph(MorphConfig{Later: DefaultPadding})
+	a, b := net.Pipe()
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+	left, right := m.Wrap(a, Client), m.Wrap(b, Server)
+
+	go func() { _, _ = left.Write([]byte("hello")) }()
+	buf := make([]byte, 5)
+	_ = right.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(right, buf); err != nil || string(buf) != "hello" {
+		t.Fatalf("read %q, %v", buf, err)
+	}
 }

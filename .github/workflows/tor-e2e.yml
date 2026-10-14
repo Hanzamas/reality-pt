@@ -20,9 +20,13 @@ permissions:
 
 jobs:
   tor:
-    name: bridge and client
+    name: bridge and client (${{ matrix.shaper }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shaper: [padding, morph]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -44,12 +48,13 @@ jobs:
         env:
           BIN: ${{ runner.temp }}/bin
           WORK: ${{ runner.temp }}/tor-e2e
+          SHAPER: ${{ matrix.shaper }}
         run: bash test/scripts/tor-e2e.sh
       - name: Keep logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tor-logs
+          name: tor-logs-${{ matrix.shaper }}
           path: |
             ${{ runner.temp }}/tor-e2e/*.log
             ${{ runner.temp }}/tor-e2e/*.stdout
