@@ -1,0 +1,66 @@
+name: censor
+
+# Replays recorded traffic through censor emulators built on CensorLab. The
+# emulators are stand-ins written for this project, not real censors. CensorLab
+# is GPL-3.0 and is only used here as a tool: nothing of it is copied or shipped.
+on:
+  pull_request:
+    paths:
+      - "test/censor/**"
+      - "internal/measure/**"
+      - "transport/**"
+      - "shaper/**"
+      - ".github/workflows/censor.yml"
+  push:
+    branches: [main]
+    paths:
+      - "test/censor/**"
+      - "internal/measure/**"
+      - "transport/**"
+      - "shaper/**"
+      - ".github/workflows/censor.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CENSORLAB_REF: 5a6c8b448a7392431f93cc3ed99b67ccdca9f986
+
+jobs:
+  censor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Build tools
+        run: sudo apt-get update && sudo apt-get install -y tcpdump libnetfilter-queue-dev libmnl-dev pkg-config clang
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            censorlab/target
+          key: censorlab-${{ env.CENSORLAB_REF }}
+      - name: Get CensorLab
+        run: |
+          [ -d censorlab/.git ] || git clone https://github.com/SPIN-UMass/censorlab.git censorlab
+          git -C censorlab checkout "$CENSORLAB_REF"
+      - name: Build CensorLab
+        working-directory: censorlab
+        run: cargo build --release
+      - name: Record and replay
+        env:
+          CENSORLAB: ${{ github.workspace }}/censorlab/target/release/censorlab
+          WORK: ${{ runner.temp }}/censor
+        run: bash test/censor/run.sh
+      - name: Keep captures and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: censor-run
+          path: ${{ runner.temp }}/censor
+          if-no-files-found: ignore
