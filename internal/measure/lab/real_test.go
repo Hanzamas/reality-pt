@@ -86,7 +86,7 @@ func visitReal(t *testing.T, site string, rng *rand.Rand) (steps []traffic.Step,
 				if err != nil {
 					return nil, err
 				}
-				recorded, trace := traffic.Record(raw)
+				recorded, trace := traffic.Observe(raw)
 				host, _, _ := net.SplitHostPort(addr)
 				conn := tls.Client(recorded, &tls.Config{ServerName: host, NextProtos: []string{"h2", "http/1.1"}})
 				if err := conn.HandshakeContext(ctx); err != nil {

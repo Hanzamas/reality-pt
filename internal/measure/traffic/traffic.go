@@ -207,10 +207,10 @@ func pump(dst, src net.Conn, parser *recordParser, trace *Trace) {
 	}
 }
 
-// Record wraps conn so that the TLS records that cross it are noted in the
+// Observe wraps conn so that the TLS records that cross it are noted in the
 // returned trace. It sees ciphertext, so it can sit under a TLS client and
 // show what a network observer would see.
-func Record(conn net.Conn) (net.Conn, *Trace) {
+func Observe(conn net.Conn) (net.Conn, *Trace) {
 	trace := &Trace{}
 	return &recordingConn{
 		Conn:  conn,
