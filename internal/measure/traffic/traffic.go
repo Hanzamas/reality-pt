@@ -206,3 +206,44 @@ func pump(dst, src net.Conn, parser *recordParser, trace *Trace) {
 		}
 	}
 }
+
+// Record wraps conn so that the TLS records that cross it are noted in the
+// returned trace. It sees ciphertext, so it can sit under a TLS client and
+// show what a network observer would see.
+func Record(conn net.Conn) (net.Conn, *Trace) {
+	trace := &Trace{}
+	return &recordingConn{
+		Conn:  conn,
+		trace: trace,
+		up:    &recordParser{up: true},
+		down:  &recordParser{},
+	}, trace
+}
+
+type recordingConn struct {
+	net.Conn
+	trace *Trace
+
+	mu       sync.Mutex // the parsers are not safe for concurrent use
+	up, down *recordParser
+}
+
+func (c *recordingConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.trace.add(c.up.feed(p[:n]))
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *recordingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.trace.add(c.down.feed(p[:n]))
+		c.mu.Unlock()
+	}
+	return n, err
+}
