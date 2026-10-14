@@ -6,6 +6,10 @@ name: traces
 # the shaper's opening profiles. Nothing but sizes and directions is kept.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/traces.yml"
+      - "internal/measure/lab/real_test.go"
 
 permissions:
   contents: read
