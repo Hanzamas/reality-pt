@@ -28,6 +28,13 @@ type PaddingConfig struct {
 	PadChance float64
 	// MaxPad is the largest padding added to a later frame.
 	MaxPad int
+	// MaxDecoys is the most decoy frames each side sends as soon as the
+	// tunnel opens, before any real data. A decoy carries no payload, only
+	// padding. Real servers and clients also speak first after a handshake,
+	// with settings and session tickets.
+	MaxDecoys int
+	// DecoyMin and DecoyMax bound the size of a decoy frame, header included.
+	DecoyMin, DecoyMax int
 }
 
 // DefaultPadding is the policy behind the shaper named "padding".
@@ -37,6 +44,9 @@ var DefaultPadding = PaddingConfig{
 	FirstMax:    1400,
 	PadChance:   0.5,
 	MaxPad:      300,
+	MaxDecoys:   3,
+	DecoyMin:    40,
+	DecoyMax:    300,
 }
 
 // Padding frames every write and adds random padding to it, so the record
@@ -51,7 +61,11 @@ type Padding struct {
 func NewPadding(cfg PaddingConfig) *Padding { return &Padding{cfg: cfg} }
 
 // Wrap implements Shaper.
-func (p *Padding) Wrap(c net.Conn) net.Conn { return &paddingConn{Conn: c, cfg: p.cfg} }
+func (p *Padding) Wrap(c net.Conn) net.Conn {
+	pc := &paddingConn{Conn: c, cfg: p.cfg}
+	pc.sendDecoys()
+	return pc
+}
 
 var framePool = sync.Pool{
 	New: func() any {
@@ -100,6 +114,36 @@ func (c *paddingConn) Write(p []byte) (int, error) {
 		p = p[n:]
 	}
 	return written, nil
+}
+
+// sendDecoys starts writing the opening decoy frames in the background. It
+// holds the write lock until they are out, so no real data can overtake them,
+// and it does not block the caller. A write failure is ignored: the next real
+// write meets the same error.
+func (c *paddingConn) sendDecoys() {
+	cfg := c.cfg
+	if cfg.MaxDecoys <= 0 || cfg.DecoyMax < cfg.DecoyMin {
+		return
+	}
+	count := rand.IntN(cfg.MaxDecoys + 1)
+	if count == 0 {
+		return
+	}
+	c.wmu.Lock()
+	go func() {
+		defer c.wmu.Unlock()
+		for ; count > 0; count-- {
+			size := cfg.DecoyMin + rand.IntN(cfg.DecoyMax-cfg.DecoyMin+1)
+			pad := max(0, size-frameHeaderLen)
+			frame := binary.BigEndian.AppendUint16(nil, 0)
+			frame = binary.BigEndian.AppendUint16(frame, uint16(pad))
+			frame = append(frame, make([]byte, pad)...)
+			if _, err := c.Conn.Write(frame); err != nil {
+				return
+			}
+			c.early++
+		}
+	}()
 }
 
 // padFor returns the padding for a frame that carries n payload bytes.

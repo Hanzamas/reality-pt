@@ -37,10 +37,11 @@ func collectBenign(t *testing.T, n int, rng *rand.Rand) [][]traffic.Step {
 	return out
 }
 
-func templateScores(tmpl traffic.Template, traces [][]traffic.Step) []float64 {
+// nearestScores scores each trace by its distance to the closest known trace.
+func nearestScores(known, traces [][]traffic.Step) []float64 {
 	scores := make([]float64, len(traces))
 	for i, tr := range traces {
-		scores[i] = tmpl.Score(tr)
+		scores[i] = traffic.Nearest(known, tr, firstSteps)
 	}
 	return scores
 }
@@ -56,10 +57,18 @@ func negModal(traces [][]traffic.Step) []float64 {
 	return out
 }
 
-// TestShapingMovesWhatADetectorSees measures two stand-in censors against a
-// tunnel without and with the padding shaper. Both detectors are made up for
-// this project, and the browsing traffic is synthetic, so the numbers show
-// whether shaping changes what can be seen and not how a real censor reacts.
+// TestShapingMovesWhatADetectorSees measures stand-in censors against a
+// tunnel without and with the padding shaper. The detectors are made up for
+// this project and the browsing traffic is synthetic, so the numbers show
+// whether shaping changes what can be seen. They do not predict how a real
+// censor reacts.
+//
+// The experiment has three detectors:
+//   - equal-size: the share of records of one size, which fixed-size Tor
+//     cells make high and a browser does not.
+//   - naive template: the censor knows how an unshaped tunnel starts.
+//   - adaptive template: the censor has also seen shaped tunnels and keeps
+//     their starts as examples.
 func TestShapingMovesWhatADetectorSees(t *testing.T) {
 	if testing.Short() {
 		t.Skip("needs a few seconds of local traffic")
@@ -67,46 +76,62 @@ func TestShapingMovesWhatADetectorSees(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 
 	plain := collectTunnel(t, "none", trainSessions+testSessions, rng)
-	padded := collectTunnel(t, "padding", testSessions, rng)
+	padded := collectTunnel(t, "padding", trainSessions+testSessions, rng)
 	benign := collectBenign(t, benignTrain+benignTest, rng)
 
-	// Detector 1: the start of the tunnel looks like the handshake of the
-	// protocol inside it. The censor knows that shape from earlier traffic.
-	tmpl := traffic.FitTemplate(plain[:trainSessions], firstSteps)
-	tau := traffic.Quantile(templateScores(tmpl, benign[:benignTrain]), benignFPR)
-	template := struct{ plain, padded, benign float64 }{
-		plain:  traffic.FlagRate(templateScores(tmpl, plain[trainSessions:]), tau),
-		padded: traffic.FlagRate(templateScores(tmpl, padded), tau),
-		benign: traffic.FlagRate(templateScores(tmpl, benign[benignTrain:]), tau),
+	plainTrain, plainTest := plain[:trainSessions], plain[trainSessions:]
+	paddedTrain, paddedTest := padded[:trainSessions], padded[trainSessions:]
+	benignCal, benignTestSet := benign[:benignTrain], benign[benignTrain:]
+
+	// Equal-size detector. A session is flagged when its modal share is above
+	// the 95th percentile of the browsing sessions, which is the 5th
+	// percentile of the negated values.
+	modalTau := traffic.Quantile(negModal(benignCal), benignFPR)
+	equal := struct{ plain, padded, benign float64 }{
+		plain:  traffic.FlagRate(negModal(plainTest), modalTau),
+		padded: traffic.FlagRate(negModal(paddedTest), modalTau),
+		benign: traffic.FlagRate(negModal(benignTestSet), modalTau),
 	}
 
-	// Detector 2: a run of records of one size, which is what a stream of
-	// fixed-size cells looks like and a browser does not produce.
-	// A session is flagged when its modal share is above the 95th percentile of
-	// the browsing sessions. On the negated values that is the 5th percentile.
-	modalTau := traffic.Quantile(negModal(benign[:benignTrain]), benignFPR)
-	modal := struct{ plain, padded, benign float64 }{
-		plain:  traffic.FlagRate(negModal(plain[trainSessions:]), modalTau),
-		padded: traffic.FlagRate(negModal(padded), modalTau),
-		benign: traffic.FlagRate(negModal(benign[benignTrain:]), modalTau),
+	// Naive template detector: examples from the unshaped tunnel, threshold
+	// set so that 5% of the browsing sessions are flagged.
+	naiveTau := traffic.Quantile(nearestScores(plainTrain, benignCal), benignFPR)
+	naive := struct{ plain, padded, benign float64 }{
+		plain:  traffic.FlagRate(nearestScores(plainTrain, plainTest), naiveTau),
+		padded: traffic.FlagRate(nearestScores(plainTrain, paddedTest), naiveTau),
+		benign: traffic.FlagRate(nearestScores(plainTrain, benignTestSet), naiveTau),
 	}
 
-	t.Logf("template detector, flagged: no shaper %.2f, padding %.2f, browsing %.2f", template.plain, template.padded, template.benign)
-	t.Logf("equal-size detector, flagged: no shaper %.2f, padding %.2f, browsing %.2f", modal.plain, modal.padded, modal.benign)
+	// Adaptive template detector: examples from both tunnels.
+	both := append(append([][]traffic.Step{}, plainTrain...), paddedTrain...)
+	adaptiveTau := traffic.Quantile(nearestScores(both, benignCal), benignFPR)
+	adaptive := struct{ plain, padded, benign float64 }{
+		plain:  traffic.FlagRate(nearestScores(both, plainTest), adaptiveTau),
+		padded: traffic.FlagRate(nearestScores(both, paddedTest), adaptiveTau),
+		benign: traffic.FlagRate(nearestScores(both, benignTestSet), adaptiveTau),
+	}
+
+	t.Logf("share of sessions flagged:        no shaper  padding  browsing")
+	t.Logf("equal-size detector                   %.2f     %.2f     %.2f", equal.plain, equal.padded, equal.benign)
+	t.Logf("naive template detector               %.2f     %.2f     %.2f", naive.plain, naive.padded, naive.benign)
+	t.Logf("adaptive template detector            %.2f     %.2f     %.2f", adaptive.plain, adaptive.padded, adaptive.benign)
 
 	// The detectors must catch the unshaped tunnel, or the comparison says
 	// nothing.
-	if template.plain < 0.5 {
-		t.Errorf("the template detector flags only %.2f of unshaped sessions", template.plain)
+	if equal.plain < 0.5 {
+		t.Errorf("the equal-size detector flags only %.2f of unshaped sessions", equal.plain)
 	}
-	if modal.plain < 0.5 {
-		t.Errorf("the equal-size detector flags only %.2f of unshaped sessions", modal.plain)
+	if naive.plain < 0.5 {
+		t.Errorf("the naive template detector flags only %.2f of unshaped sessions", naive.plain)
 	}
-	// Shaping must lower both.
-	if template.padded >= template.plain {
-		t.Errorf("padding did not lower the template detector: %.2f vs %.2f", template.padded, template.plain)
+	// What shaping is meant to do against a censor that does not know about
+	// it.
+	if equal.padded >= equal.plain {
+		t.Errorf("padding did not lower the equal-size detector: %.2f vs %.2f", equal.padded, equal.plain)
 	}
-	if modal.padded >= modal.plain {
-		t.Errorf("padding did not lower the equal-size detector: %.2f vs %.2f", modal.padded, modal.plain)
+	if naive.padded >= naive.plain {
+		t.Errorf("padding did not lower the naive template detector: %.2f vs %.2f", naive.padded, naive.plain)
 	}
+	// The adaptive detector is reported but not asserted: it is the case that
+	// shows the limit of the shaper.
 }

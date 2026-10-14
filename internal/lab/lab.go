@@ -135,7 +135,7 @@ func (b *Bridge) TorLikeSession(t testing.TB, rng *mrand.Rand) []traffic.Step {
 
 	cell := make([]byte, CellLen)
 	echo := make([]byte, CellLen)
-	for cells := 8 + rng.IntN(32); cells > 0; {
+	for cells := 40 + rng.IntN(40); cells > 0; {
 		burst := min(1+rng.IntN(4), cells)
 		for i := 0; i < burst; i++ {
 			if _, err := link.Write(cell); err != nil {

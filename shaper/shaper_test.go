@@ -153,6 +153,51 @@ func TestPaddingConcurrentWritersKeepFramesWhole(t *testing.T) {
 	}
 }
 
+func TestPaddingSendsDecoysThatTheReaderSkips(t *testing.T) {
+	cfg := PaddingConfig{MaxDecoys: 3, DecoyMin: 40, DecoyMax: 300}
+	sawDecoys := false
+	for attempt := 0; attempt < 60 && !sawDecoys; attempt++ {
+		a, b := net.Pipe()
+		var sizes []int
+		var mu sync.Mutex
+		tapped := &tapConn{Conn: a, onWrite: func(n int) { mu.Lock(); sizes = append(sizes, n); mu.Unlock() }}
+
+		// The reading end needs no decoys of its own: nothing reads them here.
+		reader := NewPadding(PaddingConfig{}).Wrap(b)
+		got := make(chan []byte, 1)
+		go func() {
+			_ = reader.SetReadDeadline(time.Now().Add(5 * time.Second))
+			data, _ := io.ReadAll(reader)
+			got <- data
+		}()
+
+		writer := NewPadding(cfg).Wrap(tapped)
+		// A real write waits for the decoys, so every frame but the last is a
+		// decoy.
+		if _, err := writer.Write([]byte("real")); err != nil {
+			t.Fatal(err)
+		}
+		_ = writer.Close()
+		if data := <-got; string(data) != "real" {
+			t.Fatalf("the reader returned %q, want only the real data", data)
+		}
+
+		mu.Lock()
+		decoys := append([]int(nil), sizes[:len(sizes)-1]...)
+		mu.Unlock()
+		for _, n := range decoys {
+			sawDecoys = true
+			if n < 40 || n > 300 {
+				t.Errorf("a decoy frame is %d bytes, want 40 to 300", n)
+			}
+		}
+		_ = b.Close()
+	}
+	if !sawDecoys {
+		t.Fatal("no decoy frame in 60 connections")
+	}
+}
+
 func TestPaddingSizesTheFirstFrames(t *testing.T) {
 	cfg := PaddingConfig{FirstFrames: 6, FirstMin: 600, FirstMax: 900}
 	left, right, sizes := wirePair(t, NewPadding(cfg))

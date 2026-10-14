@@ -61,6 +61,18 @@ func (t Template) Score(steps []Step) float64 {
 	return total / float64(len(t.steps))
 }
 
+// Nearest says how far steps are from the closest of several known traces,
+// comparing the first n steps. It is the template score with one template per
+// trace, so it can follow traffic that varies from session to session.
+func Nearest(known [][]Step, steps []Step, n int) float64 {
+	best := penalty
+	for _, k := range known {
+		t := Template{steps: k[:min(n, len(k))]}
+		best = math.Min(best, t.Score(steps))
+	}
+	return best
+}
+
 // ModalShare is the share of the first k records in one direction that have
 // the most common length. Traffic made of equal-size units, such as Tor cells,
 // scores high.
