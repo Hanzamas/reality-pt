@@ -1,0 +1,44 @@
+name: fuzz
+
+# Short fuzzing runs of the parsers that read untrusted input. A crash writes
+# its input under testdata/fuzz and uploads it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "transport/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzParseShortID
+          - FuzzParseClientParams
+          - FuzzParseServerParams
+          - FuzzParseHelloRecord
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Fuzz
+        run: go test ./transport/reality -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 40s
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: transport/reality/testdata/fuzz
+          if-no-files-found: ignore

@@ -31,6 +31,16 @@ builds:
     ldflags:
       - -s -w
 
+  - id: check
+    main: ./cmd/reality-check
+    binary: reality-check
+    env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+
 archives:
   - formats: [tar.gz]
     format_overrides:
@@ -45,7 +55,7 @@ archives:
 nfpms:
   - id: reality-pt
     package_name: reality-pt
-    ids: [client, server, keygen]
+    ids: [client, server, keygen, check]
     maintainer: Hanzamas <113221213+Hanzamas@users.noreply.github.com>
     homepage: https://github.com/Hanzamas/reality-pt
     license: BSD-3-Clause
@@ -60,8 +70,25 @@ nfpms:
       - src: LICENSES/MPL-2.0.txt
         dst: /usr/share/doc/reality-pt/MPL-2.0.txt
 
+sboms:
+  - artifacts: archive
+
 checksum:
   name_template: checksums.txt
+
+# Keyless signature of the checksum file, made with the workflow's identity.
+# Verify with cosign verify-blob, see the README.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    output: true
 
 changelog:
   sort: asc

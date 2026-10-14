@@ -1,0 +1,38 @@
+name: freshness
+
+# A ClientHello profile that trails the real browser is a signature of its own.
+# Each week this compares the profiles with the current Chrome and Firefox
+# releases and opens an issue when they have drifted.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Compare profiles with the browsers
+        id: check
+        env:
+          REALITY_PT_FRESHNESS: "1"
+        run: go test ./transport/reality -run '^TestBrowserProfilesAreFresh$' -count=1 -v
+      - name: Open an issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="ClientHello profiles are out of date"
+          if gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' | grep -q .; then
+            echo "An issue is already open."
+            exit 0
+          fi
+          gh issue create --title "$title" --body "The weekly freshness check found a profile that trails its browser. Update uTLS with the tidy workflow (get=github.com/refraction-networking/utls@master) and check the new profiles pass the handshake test. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

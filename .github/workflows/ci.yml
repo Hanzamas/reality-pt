@@ -50,12 +50,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: stable
+      - uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --snapshot --skip=publish --clean
+          args: release --snapshot --skip=publish,sign --clean
       - name: Package contents
         run: |
           ls dist
           deb="$(ls dist/*_amd64.deb | head -1)"
-          dpkg-deb -c "$deb" | grep -E 'usr/bin/reality-(client|server|keygen)$' | wc -l | grep -qx 3
+          dpkg-deb -c "$deb" | grep -E 'usr/bin/reality-(client|server|keygen|check)$' | wc -l | grep -qx 4
+          ls dist/*.sbom.json | head -3
