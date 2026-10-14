@@ -33,7 +33,16 @@ const (
 	timeout  = 60 * time.Second
 )
 
+// binDir holds the binaries built by TestMain.
 var binDir string
+
+// exe returns the file name of an executable on this platform.
+func exe(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
 
 func TestMain(m *testing.M) { os.Exit(run(m)) }
 
@@ -47,7 +56,7 @@ func run(m *testing.M) int {
 	binDir = dir
 
 	for _, name := range []string{"reality-client", "reality-server"} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name+runtime.GOEXE), "../cmd/"+name)
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, exe(name)), "../cmd/"+name)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "build %s: %v\n", name, err)
@@ -193,7 +202,7 @@ func startPT(t *testing.T, name string, env ...string) <-chan string {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, filepath.Join(binDir, name+runtime.GOEXE))
+	cmd := exec.CommandContext(ctx, filepath.Join(binDir, exe(name)))
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stderr = logWriter{t: t, prefix: name + ": "}
 	stdout, err := cmd.StdoutPipe()
