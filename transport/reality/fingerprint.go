@@ -18,15 +18,14 @@ const DefaultFingerprint = "chrome"
 // a 32-byte session ID in it, so a profile belongs here only if
 // TestEveryFingerprintCompletesAHandshake passes for it.
 //
-// The names without a version follow the newest profile uTLS ships for that
-// browser. Pinned names stay available for bridges that must keep working
-// while a newer profile is being checked.
+// A profile must also track its browser. TestBrowserProfilesAreFresh checks
+// that weekly and fails when a profile trails the browser by more than a few
+// releases, because an old profile is a fingerprint of its own. Firefox is
+// left out for that reason: uTLS has no profile for a recent Firefox yet. Add
+// it back when it does. Safari has no automatic check.
 var fingerprints = map[string]utls.ClientHelloID{
-	"chrome":     utls.HelloChrome_Auto,
-	"chrome-133": utls.HelloChrome_133,
-	"chrome-131": utls.HelloChrome_131,
-	"firefox":    utls.HelloFirefox_Auto,
-	"safari":     utls.HelloSafari_Auto,
+	"chrome": utls.HelloChrome_Auto,
+	"safari": utls.HelloSafari_Auto,
 }
 
 // Fingerprints returns the supported profile names in sorted order.

@@ -66,11 +66,11 @@ The server only accepts a ClientHello that offers an X25519MLKEM768 key share an
 | name | follows |
 |---|---|
 | `chrome` (default) | newest Chrome profile in uTLS |
-| `chrome-133`, `chrome-131` | pinned Chrome versions |
-| `firefox` | newest Firefox profile in uTLS |
-| `safari` | newest Safari profile in uTLS |
+| `safari` | newest Safari profile in uTLS, no automatic freshness check |
 
-A profile that drifts from what the real browser sends becomes a signature of its own, so keep uTLS current.
+Firefox is not offered: uTLS has no profile for a recent Firefox, and the weekly freshness check found its newest profile ten releases behind. An old profile is a fingerprint of its own, so it is better absent.
+
+The `freshness` workflow compares the profiles with the current Chrome and Firefox releases every week and opens an issue when one has drifted.
 
 ## What the tests prove
 

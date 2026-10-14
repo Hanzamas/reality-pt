@@ -34,6 +34,9 @@ func TestBrowserProfilesAreFresh(t *testing.T) {
 		}
 	})
 	t.Run("firefox", func(t *testing.T) {
+		if _, err := lookupFingerprint("firefox"); err != nil {
+			t.Skip("no firefox profile is registered")
+		}
 		stable := firefoxStableMajor(t)
 		have := profileMajor(t, "firefox")
 		t.Logf("Firefox stable is %d, the uTLS profile is %d", stable, have)
