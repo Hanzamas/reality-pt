@@ -79,7 +79,7 @@ func TestShapersAgainstRealTraffic(t *testing.T) {
 	}{
 		{"no shaper", shaper.Noop{}},
 		{"padding", shaper.NewPadding(shaper.DefaultPadding)},
-		{"morph", shaper.NewMorph(shaper.MorphConfig{Openings: profiles, MaxSlots: 12, Idle: shaper.DefaultMorphIdle, Later: shaper.DefaultPadding})},
+		{"morph", shaper.NewMorph(shaper.MorphConfig{Openings: profiles, Later: shaper.DefaultPadding})},
 	}
 	sessions := make([][][]traffic.Step, len(shapers))
 	for i, sh := range shapers {

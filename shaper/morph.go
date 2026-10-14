@@ -1,18 +1,40 @@
 package shaper
 
 import (
+	"bytes"
 	_ "embed"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
 
-// tlsRecordOverhead is what TLS 1.3 adds to a record body: the inner content
-// type and the authentication tag. A frame of F bytes is a record of F+17.
-const tlsRecordOverhead = 17
+const (
+	// tlsRecordOverhead is what TLS 1.3 adds to a record body: the inner
+	// content type and the authentication tag. A frame of F bytes is a record
+	// of F+17.
+	tlsRecordOverhead = 17
+	// morphPrefixLen is the room the client's first frame spends on naming the
+	// opening: a 2-byte index and a 2-byte count of openings.
+	morphPrefixLen = 4
+	// minFrame is the smallest frame a step can have: the header, the prefix
+	// the first one carries, and a byte of data.
+	minFrame = frameHeaderLen + morphPrefixLen + 1
+	// maxBuffered bounds the data held for a reader that is slow.
+	maxBuffered = 1 << 20
+
+	// DefaultMorphIdle is how long a side waits at its turn before it sends a
+	// decoy instead of data.
+	DefaultMorphIdle = 15 * time.Millisecond
+	// DefaultMorphSteps is how many records of an opening are followed.
+	DefaultMorphSteps = 16
+)
 
 // realOpenings holds the start of real HTTP/2 connections: sizes and
 // directions of the first application data records after the handshake,
@@ -55,43 +77,63 @@ func ParseOpenings(data []byte) ([]Opening, error) {
 		}
 	}
 	if len(openings) == 0 {
-		return nil, fmt.Errorf("parse openings: no traces")
+		return nil, errors.New("parse openings: no traces")
 	}
 	return openings, nil
 }
 
 // MorphConfig controls how Morph follows a real opening.
 type MorphConfig struct {
-	// Openings are the real connections to follow. Each tunnel follows one,
-	// chosen at random.
+	// Openings are the real connections to follow. The client picks one at
+	// random for each tunnel and tells the server which. Both ends must be
+	// built with the same list.
 	Openings []Opening
-	// MaxSlots is how many of its own records each side shapes.
-	MaxSlots int
-	// Idle is how long a side waits without real data before it sends a decoy
-	// to keep to the opening.
+	// MaxSteps is how many records of the opening, from both ends together,
+	// are followed. Zero means DefaultMorphSteps.
+	MaxSteps int
+	// Idle is how long a side waits at its turn without data before it sends a
+	// decoy. Zero means DefaultMorphIdle.
 	Idle time.Duration
 	// Later pads the frames after the opening.
 	Later PaddingConfig
 }
 
-// DefaultMorphIdle is the pause before a decoy.
-const DefaultMorphIdle = 25 * time.Millisecond
-
-// Morph makes the start of the tunnel follow the start of a real connection.
-// Each side picks a real opening and takes the records its own direction sends.
-// Real data fills those records, split or padded to the size the opening has
-// there, and a decoy takes the place of data that does not come. After the
-// opening, frames get light random padding.
+// Morph makes the start of the tunnel follow the start of a real connection,
+// record by record and in the same order. The client picks a real opening and
+// tells the server which. After that the two ends take turns, each sending its
+// next record of the opening when it is its turn: real data, padded or split to
+// the size the opening has there, or a decoy if no data comes. A turn lasts
+// until the other end's record arrives, so the sequence of directions on the
+// wire is that of the real connection. After the opening, frames get light
+// random padding.
 //
-// This is an attempt to make the opening exchange look like ordinary HTTPS
-// instead of like TLS inside TLS. How well it works is measured in
-// internal/measure, against traffic the profiles were not taken from.
+// The price is delay: the data inside the tunnel waits for its turn, up to Idle
+// per step, during the first steps of a connection.
+//
+// How well this works is measured in internal/measure, against traffic the
+// openings were not taken from.
 type Morph struct {
-	cfg MorphConfig
+	cfg    MorphConfig
+	usable []Opening
 }
 
-// NewMorph returns a Morph shaper.
-func NewMorph(cfg MorphConfig) *Morph { return &Morph{cfg: cfg} }
+// NewMorph returns a Morph shaper. Openings that do not start with a client
+// record are not used.
+func NewMorph(cfg MorphConfig) *Morph {
+	if cfg.MaxSteps <= 0 {
+		cfg.MaxSteps = DefaultMorphSteps
+	}
+	if cfg.Idle <= 0 {
+		cfg.Idle = DefaultMorphIdle
+	}
+	m := &Morph{cfg: cfg}
+	for _, o := range cfg.Openings {
+		if len(o.Steps) >= 2 && o.Steps[0].Up {
+			m.usable = append(m.usable, o)
+		}
+	}
+	return m
+}
 
 // DefaultMorph returns a Morph that follows the real openings shipped with the
 // package.
@@ -100,87 +142,257 @@ func DefaultMorph() (*Morph, error) {
 	if err != nil {
 		return nil, err
 	}
-	later := DefaultPadding
-	return NewMorph(MorphConfig{Openings: openings, MaxSlots: 12, Idle: DefaultMorphIdle, Later: later}), nil
+	return NewMorph(MorphConfig{Openings: openings, Later: DefaultPadding}), nil
 }
 
-// Wrap implements Shaper. The client follows the records of its opening that
-// the client sent, and the server the records the server sent.
+// Wrap implements Shaper.
 func (m *Morph) Wrap(c net.Conn, role Role) net.Conn {
-	mc := &morphConn{Conn: c, cfg: m.cfg, done: make(chan struct{}), last: time.Now()}
-	mc.slots = m.pickSlots(role)
-	if len(mc.slots) > 0 && m.cfg.Idle > 0 {
-		go mc.decoyLoop()
+	if len(m.usable) == 0 {
+		return NewPadding(m.cfg.Later).Wrap(c, role)
 	}
+	mc := &morphConn{Conn: c, m: m, role: role, done: make(chan struct{})}
+	mc.cond = sync.NewCond(&mc.mu)
+	if role == Client {
+		mc.mu.Lock()
+		mc.setPlanLocked(rand.IntN(len(m.usable)))
+		mc.mu.Unlock()
+	}
+	go mc.readLoop()
+	go mc.decoyLoop()
 	return mc
 }
 
-// pickSlots chooses an opening and returns the frame sizes for one side.
-func (m *Morph) pickSlots(role Role) []int {
-	if len(m.cfg.Openings) == 0 {
-		return nil
-	}
-	opening := m.cfg.Openings[rand.IntN(len(m.cfg.Openings))]
-	var slots []int
-	for _, step := range opening.Steps {
-		if step.Up != (role == Client) {
-			continue
-		}
-		slots = append(slots, max(step.Len-tlsRecordOverhead, frameHeaderLen+1))
-		if len(slots) == m.cfg.MaxSlots {
-			break
-		}
-	}
-	return slots
+var (
+	errMorphPrefix = errors.New("shaper: the first frame does not name an opening")
+	errMorphTable  = errors.New("shaper: the peer uses a different list of openings")
+)
+
+// planStep is one record of the opening that is being followed.
+type planStep struct {
+	mine bool // this end sends it
+	size int  // frame size in bytes
 }
 
 type morphConn struct {
 	net.Conn
-	cfg MorphConfig
-	frameReader
+	m    *Morph
+	role Role
 
-	wmu   sync.Mutex
-	slots []int     // frame sizes still to be sent, in order
-	last  time.Time // when a frame was last written
+	wmu sync.Mutex // one writer at a time
+
+	mu        sync.Mutex // guards what follows
+	cond      *sync.Cond
+	index     int
+	plan      []planStep
+	ready     bool      // the plan is known
+	pos       int       // the step that is next
+	turnAt    time.Time // when the current step became next
+	rbuf      bytes.Buffer
+	rerr      error // why reading stopped
+	closed    bool
+	rdeadline time.Time
 
 	done chan struct{}
 	once sync.Once
 }
 
-// Read implements net.Conn. It returns payload bytes only.
-func (c *morphConn) Read(p []byte) (int, error) { return c.read(c.Conn, p) }
+// setPlanLocked chooses the opening and builds this end's plan from it.
+func (c *morphConn) setPlanLocked(index int) {
+	c.index = index
+	steps := c.m.usable[index].Steps
+	c.plan = c.plan[:0]
+	for _, s := range steps[:min(len(steps), c.m.cfg.MaxSteps)] {
+		c.plan = append(c.plan, planStep{
+			mine: s.Up == (c.role == Client),
+			size: max(s.Len-tlsRecordOverhead, minFrame),
+		})
+	}
+	c.ready = true
+	c.turnAt = time.Now()
+	c.cond.Broadcast()
+}
 
-// Write implements net.Conn.
+func (c *morphConn) advanceLocked() {
+	c.pos++
+	c.turnAt = time.Now()
+	c.cond.Broadcast()
+}
+
+// myTurnLocked reports whether the next step is this end's.
+func (c *morphConn) myTurnLocked() bool {
+	return c.ready && c.pos < len(c.plan) && c.plan[c.pos].mine
+}
+
+// readLoop reads frames in the background so that the peer's steps are counted
+// even while the application is busy writing.
+func (c *morphConn) readLoop() {
+	first := true
+	for {
+		var header [frameHeaderLen]byte
+		if _, err := io.ReadFull(c.Conn, header[:]); err != nil {
+			c.fail(err)
+			return
+		}
+		payload := make([]byte, binary.BigEndian.Uint16(header[0:2]))
+		if _, err := io.ReadFull(c.Conn, payload); err != nil {
+			c.fail(unexpectedEOF(err))
+			return
+		}
+		if pad := int64(binary.BigEndian.Uint16(header[2:4])); pad > 0 {
+			if _, err := io.CopyN(io.Discard, c.Conn, pad); err != nil {
+				c.fail(unexpectedEOF(err))
+				return
+			}
+		}
+
+		c.mu.Lock()
+		if first && c.role == Server {
+			// The client's first frame names the opening.
+			if len(payload) < morphPrefixLen {
+				c.mu.Unlock()
+				c.fail(errMorphPrefix)
+				return
+			}
+			index := int(binary.BigEndian.Uint16(payload[0:2]))
+			count := int(binary.BigEndian.Uint16(payload[2:4]))
+			if count != len(c.m.usable) || index >= count {
+				c.mu.Unlock()
+				c.fail(errMorphTable)
+				return
+			}
+			payload = payload[morphPrefixLen:]
+			c.setPlanLocked(index)
+		}
+		first = false
+
+		// A frame from the peer completes the peer's step.
+		if c.ready && c.pos < len(c.plan) && !c.plan[c.pos].mine {
+			c.advanceLocked()
+		}
+		c.rbuf.Write(payload)
+		c.cond.Broadcast()
+		for c.rbuf.Len() > maxBuffered && !c.closed {
+			c.cond.Wait()
+		}
+		c.mu.Unlock()
+	}
+}
+
+// fail records why reading stopped and wakes everyone who waits.
+func (c *morphConn) fail(err error) {
+	c.mu.Lock()
+	if c.rerr == nil {
+		c.rerr = err
+	}
+	c.cond.Broadcast()
+	c.mu.Unlock()
+	if errors.Is(err, errMorphPrefix) || errors.Is(err, errMorphTable) {
+		_ = c.Conn.Close()
+	}
+}
+
+// Read implements net.Conn. It returns payload bytes only.
+func (c *morphConn) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.rbuf.Len() == 0 {
+		if c.rerr != nil {
+			return 0, c.rerr
+		}
+		if c.closed {
+			return 0, net.ErrClosed
+		}
+		if d := c.rdeadline; !d.IsZero() {
+			if !time.Now().Before(d) {
+				return 0, os.ErrDeadlineExceeded
+			}
+			wake := time.AfterFunc(time.Until(d), func() {
+				c.mu.Lock()
+				c.cond.Broadcast()
+				c.mu.Unlock()
+			})
+			c.cond.Wait()
+			wake.Stop()
+			continue
+		}
+		c.cond.Wait()
+	}
+	n, _ := c.rbuf.Read(p)
+	c.cond.Broadcast() // room for the read loop
+	return n, nil
+}
+
+// Write implements net.Conn. Each chunk of p goes out as one frame at this
+// end's next turn.
 func (c *morphConn) Write(p []byte) (int, error) {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 
 	written := 0
 	for len(p) > 0 {
-		var n, pad int
-		if len(c.slots) > 0 {
-			size := c.slots[0]
-			c.slots = c.slots[1:]
-			n = min(len(p), size-frameHeaderLen, maxPayload)
-			pad = size - frameHeaderLen - n
-		} else {
-			n = min(len(p), maxPayload)
-			pad = laterPad(c.cfg.Later)
-		}
-		if err := writeFrame(c.Conn, p[:n], pad); err != nil {
+		step, planned, first, err := c.takeTurn()
+		if err != nil {
 			return written, err
 		}
-		written += n
-		p = p[n:]
-		c.last = time.Now()
+		var prefix []byte
+		room := min(len(p), maxPayload)
+		pad := 0
+		if planned {
+			room = step.size - frameHeaderLen
+			if first {
+				prefix = c.prefix()
+				room -= len(prefix)
+			}
+			room = min(len(p), room, maxPayload)
+			pad = step.size - frameHeaderLen - len(prefix) - room
+		} else {
+			pad = laterPad(c.m.cfg.Later)
+		}
+		if err := writeFrame(c.Conn, append(prefix, p[:room]...), pad); err != nil {
+			return written, err
+		}
+		written += room
+		p = p[room:]
 	}
 	return written, nil
 }
 
-// decoyLoop fills a slot with padding whenever the side has been quiet for
-// Idle, until the opening is used up or the connection closes.
+// takeTurn waits for this end's turn and takes it. planned is false once the
+// opening is over. first is true for the client's very first frame, which
+// names the opening.
+func (c *morphConn) takeTurn() (step planStep, planned, first bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for {
+		switch {
+		case c.closed:
+			return step, false, false, net.ErrClosed
+		case c.rerr != nil:
+			return step, false, false, io.ErrClosedPipe
+		case c.ready && c.pos >= len(c.plan):
+			return step, false, false, nil
+		case c.myTurnLocked():
+			step, first = c.plan[c.pos], c.role == Client && c.pos == 0
+			c.advanceLocked()
+			return step, true, first, nil
+		}
+		c.cond.Wait()
+	}
+}
+
+// prefix names the opening for the server.
+func (c *morphConn) prefix() []byte {
+	b := binary.BigEndian.AppendUint16(nil, uint16(c.index))
+	return binary.BigEndian.AppendUint16(b, uint16(len(c.m.usable)))
+}
+
+// decoyLoop sends a decoy when this end's turn has passed without data for
+// Idle. It stops when the opening is over or the connection closes.
 func (c *morphConn) decoyLoop() {
-	ticker := time.NewTicker(c.cfg.Idle)
+	ticker := time.NewTicker(c.m.cfg.Idle)
 	defer ticker.Stop()
 	for {
 		select {
@@ -188,23 +400,58 @@ func (c *morphConn) decoyLoop() {
 			return
 		case <-ticker.C:
 		}
+
 		c.wmu.Lock()
-		if len(c.slots) == 0 {
-			c.wmu.Unlock()
-			return
+		c.mu.Lock()
+		finished := c.closed || c.rerr != nil || (c.ready && c.pos >= len(c.plan))
+		var (
+			step  planStep
+			first bool
+			send  bool
+		)
+		if !finished && c.myTurnLocked() && time.Since(c.turnAt) >= c.m.cfg.Idle {
+			step, first, send = c.plan[c.pos], c.role == Client && c.pos == 0, true
+			c.advanceLocked()
 		}
-		if time.Since(c.last) >= c.cfg.Idle {
-			size := c.slots[0]
-			c.slots = c.slots[1:]
-			_ = writeFrame(c.Conn, nil, size-frameHeaderLen)
-			c.last = time.Now()
+		c.mu.Unlock()
+		if send {
+			var prefix []byte
+			if first {
+				prefix = c.prefix()
+			}
+			_ = writeFrame(c.Conn, prefix, step.size-frameHeaderLen-len(prefix))
 		}
 		c.wmu.Unlock()
+		if finished {
+			return
+		}
 	}
+}
+
+// SetDeadline implements net.Conn. The read deadline is kept here, because the
+// background reader must never time out on the underlying connection.
+func (c *morphConn) SetDeadline(t time.Time) error {
+	_ = c.SetReadDeadline(t)
+	return c.Conn.SetWriteDeadline(t)
+}
+
+// SetReadDeadline implements net.Conn.
+func (c *morphConn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	c.rdeadline = t
+	c.cond.Broadcast()
+	c.mu.Unlock()
+	return nil
 }
 
 // Close implements net.Conn.
 func (c *morphConn) Close() error {
-	c.once.Do(func() { close(c.done) })
+	c.once.Do(func() {
+		close(c.done)
+		c.mu.Lock()
+		c.closed = true
+		c.cond.Broadcast()
+		c.mu.Unlock()
+	})
 	return c.Conn.Close()
 }
