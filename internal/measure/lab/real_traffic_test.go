@@ -3,6 +3,7 @@ package lab
 import (
 	"math/rand/v2"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/hanzamas/reality-pt/internal/measure/traffic"
@@ -112,6 +113,27 @@ func TestShapersAgainstRealTraffic(t *testing.T) {
 	// The same censors on real traffic that neither they nor the shapers saw.
 	adaptiveReal := flagged(append(append([][]traffic.Step{}, plainTrain...), sessions[2][:trainSessions]...), held)
 	t.Logf("%-34s %.2f           %.2f", "real traffic (false alarms)", flagged(plainTrain, held), adaptiveReal)
+
+	show := func(label string, tr []traffic.Step) {
+		var b []byte
+		for _, st := range tr[:min(10, len(tr))] {
+			dir := byte('D')
+			if st.Up {
+				dir = 'U'
+			}
+			b = append(b, dir)
+			b = append(b, []byte(strconv.Itoa(st.Len))...)
+			b = append(b, ' ')
+		}
+		t.Logf("  %-8s %s", label, b)
+	}
+	t.Logf("the first records of some sessions (U client to server, D the reverse, record length):")
+	for i := 0; i < 3; i++ {
+		show("morph", sessions[2][trainSessions+i])
+	}
+	for i := 0; i < 3; i++ {
+		show("real", held[i*7])
+	}
 
 	// The comparison only means something if the censor catches an unshaped
 	// tunnel and leaves real traffic mostly alone.
