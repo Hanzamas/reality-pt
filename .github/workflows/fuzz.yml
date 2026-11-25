@@ -29,15 +29,15 @@ jobs:
           - FuzzParseServerParams
           - FuzzParseHelloRecord
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: Fuzz
         run: go test ./transport/reality -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 40s
       - name: Keep the crashing input
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-${{ matrix.target }}
           path: transport/reality/testdata/fuzz
